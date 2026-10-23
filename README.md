@@ -68,4 +68,9 @@ verification data behind every number in it, and the open questions.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+Third-party components and their licenses (mem0, qdrant-client, llama.cpp,
+fastembed, model weights) are documented in
+[SPEC.md §15](SPEC.md#15-licensing-and-third-party-components). Model
+weights are downloaded at runtime, never redistributed by the project.

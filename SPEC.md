@@ -593,7 +593,51 @@ against the data in §13.
 
 ---
 
-## 15. Open questions
+## 15. Licensing and third-party components
+
+The project is MIT licensed (`LICENSE`).
+
+### 15.1 Runtime dependencies
+
+| Component | License | Implication |
+|---|---|---|
+| `mem0ai/mem0` | Apache-2.0 | Permissive; NOTICE/attribution applies when redistributed |
+| `qdrant-client` | Apache-2.0 | Permissive; NOTICE/attribution applies when redistributed |
+| `ggml-org/llama.cpp` | MIT | Permissive; attribution required in distribution |
+| `fastembed` (Qdrant) | Apache-2.0 | Permissive |
+| Model weights (e.g. `nomic-embed-text-v1.5`, Qwen3.5) | Apache-2.0 | Per-model license; surfaced at download time |
+
+MIT as the project license accepts all of these as inputs.
+
+### 15.2 Obligations when shipping a bundled environment
+
+The app builds and ships its own Python environment, which means it
+redistributes Apache-2.0 licensed packages. Required at packaging time:
+
+- Include the Apache-2.0 license text for each redistributed package.
+- Carry over any `NOTICE` file present in the package.
+- List the third-party components and their licenses in the distribution
+  (target: an auto-generated `THIRD_PARTY_LICENSES.md` produced during
+  packaging, not maintained by hand).
+
+Model weights are **downloaded at runtime, never redistributed** by the
+app. Their licenses are surfaced when a model is added, and the catalogue
+records the license per model.
+
+### 15.3 What the app downloads at runtime
+
+| Artifact | Source | License |
+|---|---|---|
+| `llama.cpp` binary | GitHub releases (pinned b-build) | MIT |
+| CUDA runtime | bundled in the `cudart-` archive | NVIDIA EULA |
+| GGUF models | Hugging Face | per model |
+| ONNX embedder models | Hugging Face | per model |
+
+None of these are vendored into the source repository.
+
+---
+
+## 16. Open questions
 
 1. **Model catalogue scope.** Which models ship in the default catalogue?
    Options: a curated set of 3–4 popular GGUF architectures, or fetch
