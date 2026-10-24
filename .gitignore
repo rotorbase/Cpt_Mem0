@@ -9,6 +9,7 @@ venv/
 
 # Runtime artefacts
 runtime/
+results/
 logs/
 keys/
 store/

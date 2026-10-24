@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -38,6 +39,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
+
+# Reuse the job-object helper so an interrupted run never leaves a
+# model in VRAM.
+sys.path.insert(0, str(ROOT / "scripts"))
+from run_tests import _assign_job  # noqa: E402
 
 from cpt_mem0.catalogue import load_catalogue  # noqa: E402
 from cpt_mem0.planner import (  # noqa: E402
@@ -84,12 +90,18 @@ def gpu_used_mib() -> int | None:
 
 def run_server(exe: str, model: Path, flags: list[str], port: int,
                timeout: int = 240) -> tuple[str, int]:
-    """Start the server, wait for it, return (log text, exit code)."""
+    """Start the server, wait for it, return (log text, exit code).
+
+    The server is always terminated, including on Ctrl+C - a model left
+    in VRAM is worse than a failed check.
+    """
     cmd = [exe, "-m", str(model), "--port", str(port), *flags]
     print("  $", " ".join(cmd))
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True,
                             errors="replace")
+    # Job object: if this process dies hard, Windows kills the server.
+    job = _assign_job(proc)
     log_lines: list[str] = []
     deadline = time.time() + timeout
     try:
@@ -105,12 +117,23 @@ def run_server(exe: str, model: Path, flags: list[str], port: int,
                 # Give the allocator a moment to settle, then stop.
                 time.sleep(3)
                 break
+        else:
+            print(f"  timeout after {timeout}s")
+    except KeyboardInterrupt:
+        print("\n  interrupted")
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        if job is not None:
+            try:
+                import ctypes
+                ctypes.WinDLL("kernel32").CloseHandle(job)
+            except Exception:
+                pass
     return "".join(log_lines), proc.returncode
 
 
@@ -123,6 +146,8 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8799)
     parser.add_argument("--tolerance-mib", type=int, default=300,
                         help="allowed difference between prediction and measurement")
+    parser.add_argument("--timeout", type=int, default=240,
+                        help="seconds to wait for the server (0 = no limit)")
     parser.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
     args = parser.parse_args()
 
@@ -182,7 +207,8 @@ def main() -> int:
         return 2
 
     before = gpu_used_mib()
-    log, _ = run_server(exe, model_path, candidate.as_flags(), args.port)
+    log, _ = run_server(exe, model_path, candidate.as_flags(), args.port,
+                        timeout=args.timeout or 10**9)
     after = gpu_used_mib()
 
     kv_match = KV_RE.search(log)

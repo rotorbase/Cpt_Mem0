@@ -14,7 +14,7 @@ or directly:
 pytest
 ```
 
-49 tests, about a tenth of a second. They cover:
+49 tests, about half a second. They cover:
 
 | Area | What is checked |
 |---|---|
@@ -30,6 +30,44 @@ pytest
 
 These run anywhere. They read no GPU and start no model, so they are
 safe to run while a memory service is active.
+
+### How long
+
+Measured on this machine, three runs each:
+
+| Command | Duration |
+|---|---|
+| `pytest tests/ -q` | 0,41 – 0,44 s |
+| `python scripts/run_tests.py` | 0,48 – 0,49 s |
+| `python scripts/regenerate_tiers.py` | 0,09 s |
+| `cpt-mem0 plan` | 0,04 – 0,05 s |
+| `cpt-mem0 validate-catalogue` | 0,04 – 0,05 s |
+
+The hardware verification takes as long as the model needs to load —
+45 s for a 9B on this card, plus a few seconds of measurement.
+
+### What gets written
+
+Everything lands in `results/` inside the repository (git-ignored):
+
+| File | Content |
+|---|---|
+| `results/pytest-junit.xml` | JUnit XML, the format CI systems read |
+| `results/results.json` | machine-readable summary: status, duration, pass counts |
+| `results/logic.log` | full console output of the logic suite |
+| `results/hardware.log` | full console output of the hardware check |
+
+Plus `.pytest_cache/` in the repository root, written by pytest itself.
+
+**Nothing outside the repository is touched.** No configuration file, no
+service, no environment variable, no registry entry. The runner adds
+`src/` to `PYTHONPATH` *for its own child processes* and leaves the
+caller's environment alone.
+
+Verified by hash: `mem0.json`, `gateway.pid` and `.env` in the Hermes
+profile were byte-identical before and after a run, both running
+`llama-server` processes kept their PIDs, and VRAM returned to its
+starting value.
 
 ## Hardware verification — needs a free GPU and a model file
 
@@ -49,25 +87,6 @@ python scripts/verify_plan.py --vram 12288 \
     --model-file ~/.cache/huggingface/hub/Qwen3.5-9B-Q4_K_M.gguf
 ```
 
-It reports:
-
-```
-planned: Qwen3.5-9B Q8_0, n_ctx 67122, KV q8_0, embedder llamacpp
-...
-measured from the server log:
-  n_ctx              67122
-  model buffer       8045.05 MiB
-  compute buffer     286.31 MiB
-  KV buffer          1114.00 MiB
-  GPU usage delta    9445 MiB (6904 -> 16349)
-
-KV delta: 1114 measured vs 1114 predicted (0 MiB)
-weights delta: 8045 measured vs 8087 predicted (42 MiB)
-n_ctx matches the plan (67122)
-
-The plan matches the measurement.
-```
-
 ### Before you run it
 
 **Stop any other `llama-server` first.** The check compares total GPU
@@ -84,6 +103,31 @@ The same applies to anything else on the card — a browser with hardware
 acceleration, a compositor. The script prints the GPU usage before and
 after, so the delta is visible.
 
+### Stopping a run that hangs
+
+Three mechanisms, in order of how you would use them:
+
+| Method | What happens |
+|---|---|
+| **Ctrl+C** | The runner terminates the child process and exits. The result file still gets written, with the phase marked `interrupted`. |
+| **`--timeout N`** | Each phase is aborted after N seconds. The child is terminated. |
+| **Closing the terminal** | The Windows job object takes the whole process tree down with it. |
+
+The job object matters. `CTRL_BREAK_EVENT` kills the Python process
+hard — the `finally` block never runs — so without it a `llama-server`
+would survive in VRAM. With `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, the
+operating system terminates the entire child tree when the handle
+closes, whether the parent exits cleanly or is killed.
+
+Verified: the parent was killed with `Process.kill()` while a child was
+sleeping. Afterwards no child process survived.
+
+The output is read on a separate thread. Reading it in the main thread
+would block in `readline()`, and the timeout would only be checked
+between output lines — a process that hangs *silently* would then never
+be interrupted. Measured: a silent hang is cut off after 3,08 s with a
+3 s limit, not after the 120 s the process wanted to run.
+
 ### Options
 
 | Option | Meaning |
@@ -93,6 +137,8 @@ after, so the delta is visible.
 | `--quant` | restrict to one quantisation |
 | `--model-file` | path to the GGUF file to load |
 | `--tolerance-mib` | allowed difference between prediction and measurement (default 300) |
+| `--timeout` | seconds per phase (0 = no limit) |
+| `--results-dir` | where to write the result files (default `<repo>/results`) |
 
 The tolerance exists because two terms are estimates: the host fraction
 (11 %, measured to 0.8 % on the weights) and the process overhead
