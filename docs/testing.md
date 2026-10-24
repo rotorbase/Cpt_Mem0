@@ -33,15 +33,27 @@ Expected: `49 passed`, total under one second.
 memory stack running, the two compete for the card and the measurement
 is meaningless.
 
-**What you should see:** the planned configuration, then the server
-command, then roughly 45 seconds of model loading, then the measured
-values and the comparison.
+### What you should see
+
+The plan, then the server command, then the model loading, then the
+measured values and the comparison. The script flushes its output as it
+goes, so you see progress rather than a blank screen.
 
 If it produces **no output at all**, the server aborted while parsing
 its arguments — before it loaded anything. That is a flag problem, not
 a hardware problem: check the flags against `llama-server --help`. The
 test suite does this automatically (`tests/test_launch_flags.py`), so a
 flag that llama.cpp does not know fails the tests.
+
+The script detects the running server by asking it over HTTP
+(`/health`), not by matching a log line — the wording of that line
+differs between llama.cpp builds, and a mismatch looks exactly like a
+hang.
+
+**Which model to use:** the buffer sizes (`KV buffer size`, `model
+buffer size`) are only printed for a chat model. An embedding model
+uses a different architecture with no CUDA KV buffer, so the comparison
+has nothing to measure. Use the 4B or the 9B for the hardware check.
 
 With the 4B model:
 
