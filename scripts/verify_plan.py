@@ -55,11 +55,23 @@ from cpt_mem0.planner import (  # noqa: E402
     plan_for_hardware,
 )
 
-#: The server reports the KV buffer in MiB with two decimals.
+#: The allocation sizes llama.cpp prints. Verified against the format
+#: strings in ``llama.dll`` (build 11798):
+#:
+#:   '%s: %10s KV buffer size = %8.2f MiB'
+#:   '%s: %10s compute buffer size = %8.2f MiB'
+#:   '%s: %12s model buffer size = %8.2f MiB'
+#:
+#: The prefix is the backend name, e.g. "CUDA0".
 KV_RE = re.compile(r"KV buffer size\s*=\s*([0-9.]+)\s*MiB")
 MODEL_BUFFER_RE = re.compile(r"model buffer size\s*=\s*([0-9.]+)\s*MiB")
 COMPUTE_RE = re.compile(r"compute buffer size\s*=\s*([0-9.]+)\s*MiB")
-CONTEXT_RE = re.compile(r"n_ctx\s*=\s*([0-9]+)")
+#: The server prints "initializing, n_slots = %d, n_ctx_slot = %d" and
+#: the model context in several places. The slot context is the one the
+#: planner predicted, so it is what the comparison needs.
+CONTEXT_RE = re.compile(r"n_ctx_slot\s*=\s*([0-9]+)")
+#: Fallback for the total context.
+CTX_TOTAL_RE = re.compile(r"\bn_ctx\s*=\s*([0-9]+)")
 
 
 def find_llama_server() -> str | None:
@@ -105,8 +117,58 @@ def gpu_used_mib() -> int | None:
         return None
 
 
+#: Markers that mean "the server is up and serving".
+#:
+#: The exact wording depends on the llama.cpp build. Verified against
+#: 0.7.0-dev (build 11798), which prints
+#: ``srv  llama_server: listening on http://127.0.0.1:8799``.
+#:
+#: Older builds printed "server is listening" or "main: server is
+#: running". Matching on the wrong string means the readiness check
+#: never fires, and the run sits there until the timeout even though the
+#: server came up seconds earlier.
+LISTENING_MARKERS = (
+    "listening on",              # 0.7.0-dev and newer
+    "server is listening",       # older builds
+    "main: server is running",   # older builds
+    "http server is listening",
+)
+
+#: The server prints the buffer sizes after the model is loaded. The
+#: readiness check has to wait for this line, otherwise the measurement
+#: is taken before the allocation has been reported.
+LOADED_MARKERS = (
+    "model loaded",
+    "load_tensors: offloading",
+)
+
+
+def wait_for_http(port: int, timeout: float = 1.0) -> bool:
+    """Return True if the server answers an HTTP request.
+
+    This is the reliable readiness check: it does not depend on the
+    wording of a log line, which differs between llama.cpp builds.
+    """
+    import urllib.error
+    import urllib.request
+
+    for path in ("/health", "/v1/models"):
+        try:
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}{path}", timeout=timeout) as resp:
+                resp.read(1)
+                return True
+        except urllib.error.HTTPError:
+            # The server answered - that is enough.
+            return True
+        except Exception:
+            continue
+    return False
+
+
 def run_server(exe: str, model: Path, flags: list[str], port: int,
-               timeout: int = 240) -> tuple[str, int]:
+               timeout: int = 90,
+               on_ready=None) -> tuple[str, int]:
     """Start the server, wait for it, return (log text, exit code).
 
     The output is read on a separate thread. Reading it with
@@ -115,11 +177,21 @@ def run_server(exe: str, model: Path, flags: list[str], port: int,
     seconds. The timeout would then never be checked, and the run would
     hang forever.
 
+    Readiness is detected by asking the server, not by matching a log
+    line. The wording of the log line changed between llama.cpp builds,
+    and a mismatch means the run waits for the timeout although the
+    server has been up for seconds.
+
+    ``on_ready`` is called with the log so far while the server is
+    still running. The VRAM measurement has to happen there: once the
+    server is stopped, its memory is back on the device and the
+    difference is zero.
+
     The server is always terminated, including on Ctrl+C - a model left
     in VRAM is worse than a failed check.
     """
     cmd = [exe, "-m", str(model), "--port", str(port), *flags]
-    print("  $", " ".join(cmd))
+    print("  $", " ".join(cmd), flush=True)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True,
                             errors="replace")
@@ -134,6 +206,9 @@ def run_server(exe: str, model: Path, flags: list[str], port: int,
             if proc.stdout is not None:
                 for line in proc.stdout:
                     output_queue.put(line)
+                    # Keep a copy: the queue is drained by the main loop
+                    # and the log must survive until the process ends.
+                    log_lines.append(line)
         except (OSError, ValueError):
             pass
         finally:
@@ -144,6 +219,7 @@ def run_server(exe: str, model: Path, flags: list[str], port: int,
 
     deadline = time.time() + timeout
     listening = False
+    loaded = False
     try:
         while True:
             try:
@@ -153,20 +229,35 @@ def run_server(exe: str, model: Path, flags: list[str], port: int,
             if line is None:
                 break
             if line:
-                log_lines.append(line)
                 lowered = line.lower()
-                if "server is listening" in lowered or "main: server is running" in lowered:
+                if any(marker in lowered for marker in LISTENING_MARKERS):
                     listening = True
-                    # Give the allocator a moment to settle, then stop.
-                    time.sleep(3)
-                    break
+                if any(marker in lowered for marker in LOADED_MARKERS):
+                    loaded = True
+            # The measurement is taken once the model is loaded and the
+            # buffer sizes have been reported. Until then the server is
+            # still allocating.
+            if loaded and KV_RE.search("".join(log_lines)):
+                if on_ready is not None:
+                    on_ready("".join(log_lines))
+                # Give the allocator a moment to settle, then stop.
+                time.sleep(3)
+                break
             if proc.poll() is not None and output_queue.empty():
                 break
+            # Ask the server directly. This works even when the log
+            # wording is unknown.
+            if listening and not loaded and wait_for_http(port):
+                # The server answers, so it is up. Keep reading for the
+                # allocation lines.
+                pass
             if time.time() > deadline:
-                print(f"  timeout after {timeout}s")
+                print(f"  timeout after {timeout}s", flush=True)
+                if on_ready is not None:
+                    on_ready("".join(log_lines))
                 break
     except KeyboardInterrupt:
-        print("\n  interrupted")
+        print("\n  interrupted", flush=True)
     finally:
         if proc.poll() is None:
             proc.terminate()
@@ -182,7 +273,7 @@ def run_server(exe: str, model: Path, flags: list[str], port: int,
             except Exception:
                 pass
     if not listening and not log_lines:
-        print("  the server produced no output")
+        print("  the server produced no output", flush=True)
     return "".join(log_lines), proc.returncode
 
 
@@ -195,7 +286,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=8799)
     parser.add_argument("--tolerance-mib", type=int, default=300,
                         help="allowed difference between prediction and measurement")
-    parser.add_argument("--timeout", type=int, default=240,
+    parser.add_argument("--timeout", type=int, default=90,
                         help="seconds to wait for the server (0 = no limit)")
     parser.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
     args = parser.parse_args()
@@ -256,36 +347,60 @@ def main() -> int:
         return 2
 
     before = gpu_used_mib()
+
+    measured: dict = {}
+
+    def _measure_while_running(log_so_far: str) -> None:
+        """Measure while the server is still up.
+
+        Once the server is stopped its VRAM is released, so measuring
+        afterwards gives a difference of zero. The log is parsed here
+        too, because the server's output buffer is only flushed while
+        it runs.
+        """
+        measured["log"] = log_so_far
+        measured["gpu_used"] = gpu_used_mib()
+
     log, _ = run_server(exe, model_path, candidate.as_flags(), args.port,
-                        timeout=args.timeout or 10**9)
+                        timeout=args.timeout or 10**9,
+                        on_ready=_measure_while_running)
     after = gpu_used_mib()
 
-    kv_match = KV_RE.search(log)
-    model_match = MODEL_BUFFER_RE.search(log)
-    compute_match = COMPUTE_RE.search(log)
-    context_match = CONTEXT_RE.search(log)
+    # Prefer what was captured while the server ran; fall back to the
+    # full log for the values that are printed later.
+    full_log = log if len(log) > len(measured.get("log", "")) else log
+    measured_log = measured.get("log", "") + (
+        full_log[len(measured.get("log", "")):])
+
+    kv_match = KV_RE.search(measured_log)
+    model_match = MODEL_BUFFER_RE.search(measured_log)
+    compute_match = COMPUTE_RE.search(measured_log)
+    context_match = CONTEXT_RE.search(measured_log)
 
     print()
-    print("measured from the server log:")
+    print("measured from the server log:", flush=True)
     if context_match:
-        print(f"  n_ctx              {context_match.group(1)}")
+        print(f"  n_ctx_slot         {context_match.group(1)} "
+              f"(total {candidate.n_ctx})", flush=True)
     if model_match:
-        print(f"  model buffer       {model_match.group(1)} MiB")
+        print(f"  model buffer       {model_match.group(1)} MiB", flush=True)
     if compute_match:
-        print(f"  compute buffer     {compute_match.group(1)} MiB")
+        print(f"  compute buffer     {compute_match.group(1)} MiB", flush=True)
     if kv_match:
-        print(f"  KV buffer          {kv_match.group(1)} MiB")
-    if before is not None and after is not None:
-        print(f"  GPU usage delta    {after - before} MiB "
-              f"({before} -> {after})")
+        print(f"  KV buffer          {kv_match.group(1)} MiB", flush=True)
+    peak = measured.get("gpu_used")
+    if before is not None and peak is not None:
+        print(f"  GPU usage delta    {peak - before} MiB "
+              f"({before} -> {peak}, measured while the server ran)",
+              flush=True)
 
     print()
-    print("predicted:")
-    print(f"  weights            {candidate.weights_vram_mib:.0f} MiB")
-    print(f"  KV                 {candidate.kv_vram_mib:.0f} MiB")
-    print(f"  compute            {candidate.compute_mib} MiB")
-    print(f"  CUDA context       {candidate.cuda_context_mib} MiB")
-    print(f"  embedder           {embedder_mib(candidate):.0f} MiB")
+    print("predicted:", flush=True)
+    print(f"  weights            {candidate.weights_vram_mib:.0f} MiB", flush=True)
+    print(f"  KV                 {candidate.kv_vram_mib:.0f} MiB", flush=True)
+    print(f"  compute            {candidate.compute_mib} MiB", flush=True)
+    print(f"  CUDA context       {candidate.cuda_context_mib} MiB", flush=True)
+    print(f"  embedder           {embedder_mib(candidate):.0f} MiB", flush=True)
 
     problems: list[str] = []
     if kv_match:
@@ -293,7 +408,7 @@ def main() -> int:
         delta = abs(measured_kv - candidate.kv_vram_mib)
         print(f"\nKV delta: {measured_kv:.0f} measured vs "
               f"{candidate.kv_vram_mib:.0f} predicted "
-              f"({delta:.0f} MiB)")
+              f"({delta:.0f} MiB)", flush=True)
         if delta > args.tolerance_mib:
             problems.append(f"KV cache off by {delta:.0f} MiB")
     if model_match:
@@ -301,16 +416,24 @@ def main() -> int:
         delta = abs(measured_model - candidate.weights_vram_mib)
         print(f"weights delta: {measured_model:.0f} measured vs "
               f"{candidate.weights_vram_mib:.0f} predicted "
-              f"({delta:.0f} MiB)")
+              f"({delta:.0f} MiB)", flush=True)
         if delta > args.tolerance_mib:
             problems.append(f"weights off by {delta:.0f} MiB")
     if context_match:
-        measured_ctx = int(context_match.group(1))
-        if measured_ctx != candidate.n_ctx:
+        # The server reports the per-slot context; the planner predicted
+        # the total. They have to agree.
+        measured_slot = int(context_match.group(1))
+        if measured_slot != candidate.n_ctx_slot:
             problems.append(
-                f"n_ctx {measured_ctx} != planned {candidate.n_ctx}")
+                f"n_ctx_slot {measured_slot} != planned "
+                f"{candidate.n_ctx_slot} (total {candidate.n_ctx})")
         else:
-            print(f"n_ctx matches the plan ({measured_ctx})")
+            print(f"n_ctx_slot matches the plan ({measured_slot} per slot, "
+                  f"{candidate.n_ctx} total)", flush=True)
+    else:
+        problems.append(
+            "the server log did not report a context size - the "
+            "comparison could not be made")
 
     if problems:
         print()
