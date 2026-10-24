@@ -198,6 +198,10 @@ Two constraints gate every candidate: the VRAM budget (§4.1) and the
 context floor (§4.7). A candidate that satisfies the budget but not the
 floor is rejected — a service that cannot extract facts is not a service.
 
+The model order is **measured extraction capability**, not parameter
+count (§17.4). Measured models rank first; unmeasured models rank below
+them and the output labels the basis.
+
 The final failure message names the binding constraint:
 
 > No viable configuration for 4096 MiB of VRAM.
@@ -739,6 +743,7 @@ planner:
   context_floor_total: 21000  # min n_ctx for the service to extract facts
   context_floor_slot: 12288   # min per-slot context for extraction
   kv_cache_type_order: [q8_0, f16, q4_0]
+  allow_degraded: false       # true = permit sub-floor configurations (see SPEC 17.3)
   calibration: "auto"         # auto | always | never
 
 update:
@@ -939,25 +944,10 @@ None of these are vendored into the source repository.
 | 2 | MCP tool surface | **Both.** Raw CRUD plus `remember` and `recall` as convenience tools. See §12.1 and `docs/api.md`. |
 | 3 | Nomic task prefixes | **No.** Measured over 46 queries in 5 languages: no significant difference, all 95 % CIs include zero. Adding them would create a store-compatibility hazard for an unproven gain. See §5.4. |
 | 4 | Multi-process store access | **Not needed.** Qdrant embedded forbids it (§3.1); the daemon owns the store and serves all clients. A Qdrant server mode remains an escape hatch, not a feature. |
+| 5 | The 4–5 GB tier | **Refuse by default, allow explicit opt-in.** The planner rejects any configuration below the context floor and reports the shortfall. `planner.allow_degraded: true` overrides it with a loud warning in `plan`, in `status` and in the daemon log. The refusal is the default because a service that silently stores nothing is worse than one that does not start. See §17.3. |
+| 6 | Chat vs. extraction weighting | **No separate weighting. One ranking, and it is not parameter count.** Measured extraction quality (§17.4) inverts the assumed order: the 2B model extracts better than the 9B. The catalogue therefore ranks by **measured extraction capability**, with chat quality as a tiebreaker. |
 
 ### 17.2 Still open
-
-**5. The 4–5 GB tier.** The context floor (§9) makes 4 GB cards
-non-viable with a GPU embedder. With the embedder on CPU the shortfall
-is ~318 MiB, which a `q4_0` KV cache would close. Should the planner
-allow a sub-floor configuration behind an explicit opt-in
-(`planner.allow_degraded: true`) that warns that fact extraction may
-fail, or should it refuse outright? Recommendation: refuse by default,
-offer the opt-in with a clear warning — the user knows their card better
-than the planner does.
-
-**6. Chat quality vs. extraction quality.** One model serves both roles
-(§9.5). A Qwen3-4B extracts facts at ~94 % of a 9B's quality but is a
-noticeably weaker chat model. Should the planner weight the two roles
-differently when picking a model — for instance preferring a model that
-is good at both over one that is excellent at one? Recommendation:
-keep it simple, one ranking (parameter count), and let the user override
-via `--model`.
 
 **7. Reranking.** The catalogue currently relies on the embedder's own
 similarity ranking. A cross-encoder reranker would improve Top-1 on
@@ -972,3 +962,99 @@ model to the catalogue, should the daemon notice and offer an upgrade?
 Recommendation: no automatic switching — the active model is a running
 service, changing it under a live client would invalidate context
 caches. Offer it as `cpt-mem0 plan --upgrade` instead.
+
+**9. Extraction quality beyond the current corpus.** The measurement in
+§17.4 uses 10 short conversation turns. Real usage involves longer
+histories, multi-turn context and more varied fact types. The catalogue
+ranking should be re-derived from a larger corpus before it is treated as
+settled.
+
+### 17.3 The degraded-mode contract
+
+```yaml
+planner:
+  allow_degraded: false     # true = permit sub-floor configurations
+```
+
+When `allow_degraded: false` (the default) and no configuration satisfies
+the context floor, `plan` exits with code 3 and prints the binding
+constraint (§4.4). The daemon does not start.
+
+When `allow_degraded: true`, the planner selects the best configuration
+that fits the VRAM budget, even if it violates the context floor, and:
+
+- `plan` prints a `WARNING` block naming the shortfall.
+- `status` reports `extraction_capable: false`.
+- The daemon log records `WARN extraction_context_below_floor` on startup.
+- `/v1/health` returns `status: degraded` rather than `healthy`.
+
+The degradation is never silent. A user who opts in knows exactly what
+they traded away.
+
+### 17.4 Measured extraction capability — and why the ranking changed
+
+The catalogue originally ranked models by parameter count. That assumption
+was wrong, and the correction came from measurement.
+
+**Test:** the real `USER_MEMORY_EXTRACTION_PROMPT` from mem0 2.2.1
+(4220 characters) with the conversation appended, 10 conversation turns in
+German and English, 2 seeds each, 20 runs per model. Scored on JSON
+validity, expected-fact recall, atomicity of the produced facts, language
+fidelity and hallucinations.
+
+| Model | JSON valid | Empty | Recall | Atomic facts | Language | Halluc. | Time/run |
+|---|---|---|---|---|---|---|---|
+| **gemma-4-E2B-it** (2B) | 20/20 | 0 | **50/52 = 96 %** | 26/26 | 16/20 | 0 | 358 ms |
+| Qwen3.5-9B | 20/20 | **2** | 46/52 = 88 % | 20/22 | 16/20 | 0 | 810 ms |
+| Qwen3-4B-Instruct | 20/20 | 0 | 44/52 = 85 % | 24/24 | 8/20 | 0 | 255 ms |
+
+Three findings:
+
+1. **The smallest model extracts best.** gemma-4-E2B reaches 96 % recall
+   against the 9B's 88 %, with zero hallucinations and perfect atomicity.
+   It is also 2.3× faster.
+2. **The 9B fails differently — it returns empty results twice.** An empty
+   extraction means nothing is stored, silently. This is the same failure
+   class as the context floor (§9): a service that appears healthy while
+   its primary function does nothing.
+3. **The 4B breaks language fidelity.** Only 8 of 20 answers came back in
+   the language of the input, against 16/20 for both others. For an
+   international audience this matters — mem0's prompt explicitly asks for
+   facts in the input's language.
+
+**Consequences for the design:**
+
+- The catalogue ranking becomes **measured extraction capability**, not
+  parameter count. A 2B model that extracts better and uses half the VRAM
+  wins on the axis that determines whether the service works at all.
+- Chat quality cannot be the deciding factor, because the service's
+  primary function is storage. Chat remains available through the
+  passthrough endpoint (§12), and users who want a better chat model can
+  pin one with `--model`.
+- The catalogue therefore gains a **measured** field per model:
+
+```json
+{
+  "id": "gemma-4-E2B-it",
+  "extraction": {
+    "measured": true,
+    "recall": 0.96,
+    "json_validity": 1.0,
+    "atomicity": 1.0,
+    "language_fidelity": 0.8,
+    "empty_rate": 0.0,
+    "corpus": "10 turns x 2 seeds, de+en",
+    "date": "2026-10-24"
+  }
+}
+```
+
+- Models without a measurement are ranked **below** measured ones, and the
+  `plan` output labels the basis. An unmeasured model is a guess; a
+  measured one is evidence.
+
+This also resolves the apparent tension in §9.5: the split model idea was
+rejected because a second process costs ~610 MiB. With gemma-4-E2B at
+2637 MiB of weights, a dedicated extractor on top of a 9B chat model fits
+on a 24 GB card for ~9300 MiB — but the measurement gives no reason to do
+it, since the 2B alone already extracts best.

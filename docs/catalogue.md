@@ -14,7 +14,9 @@ measured 11 % host fraction (§2 of `verification.md`).
 ```
 1. Determine VRAM total and the usable budget
    usable = total - reserve(10%) - headroom(6%)
-2. For each candidate model (largest first):
+2. Sort candidates by EXTRACTION CAPABILITY (measured, see §1.1),
+   not by parameter count
+3. For each candidate model (best extraction first):
      for each quantisation (best first):
        weights_vram = file_size * 0.89
        if weights_vram + OVERHEAD > usable: continue
@@ -26,11 +28,30 @@ measured 11 % host fraction (§2 of `verification.md`).
 `OVERHEAD` = 610 MiB (process) + embedder cost (540 MiB GPU / 0 CPU) +
 KV floor (1570 MiB).
 
-The catalogue is ordered by **parameter count descending**, not by a
-quality score. A 9B at Q4_K_M is a better default than a 4B at Q8_0 on a
-12 GB card, and the algorithm has to decide between them — parameter count
-is the axis that tracks general capability; quantisation only trades
-quality for size.
+### 1.1 Why the ranking is extraction capability, not parameter count
+
+The original ranking by parameter count was wrong. Measured against the
+real mem0 extraction prompt (SPEC §17.4):
+
+| Model | Params | Extraction recall | JSON valid | Empty results | Halluc. |
+|---|---|---|---|---|---|
+| **gemma-4-E2B-it** | 2B | **96 %** | 20/20 | 0 | 0 |
+| Qwen3.5-9B | 9B | 88 % | 20/20 | **2** | 0 |
+| Qwen3-4B-Instruct | 4B | 85 % | 20/20 | 0 | 0 |
+
+The 2B model extracts better than the 9B, uses less than half the VRAM and
+runs 2.3× faster. The 9B's failure mode is the dangerous one: it returns
+an empty fact list twice out of twenty runs — a service that appears
+healthy while storing nothing.
+
+Extraction capability is the axis that determines whether the service
+works at all, so it decides the ranking. Chat quality is a tiebreaker
+only, and a user who wants a stronger chat model pins one explicitly
+(`--model`).
+
+Models without a measurement rank **below** measured ones, and `plan`
+labels the basis. An unmeasured model is a guess; a measured one is
+evidence.
 
 ---
 

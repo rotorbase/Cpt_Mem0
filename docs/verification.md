@@ -439,4 +439,69 @@ model. A naive "smallest file with this quantisation" search picks the
 draft instead of the main model (4815 MiB). Catalogue resolution must
 exclude `MTP/` and `mmproj` paths.
 
+---
+
+## 12. Extraction capability (SPEC §17.4)
+
+### 12.1 Method
+
+The real `USER_MEMORY_EXTRACTION_PROMPT` from mem0 2.2.1 (4220 characters)
+with the conversation appended, run against each model through
+`llama-server` with `--reasoning off`, temperature 0.
+
+- 10 conversation turns (5 German, 5 English), 2 seeds each
+- 20 runs per model
+- Scored on: JSON validity, expected-fact recall, atomicity of the
+  produced facts, language fidelity, hallucinations, wall time
+
+The expected output format is `{"facts": [...]}` — a dict, not a bare
+array. An earlier test run that looked for a top-level array reported
+0 % recall for every model; the models were correct, the parser was wrong.
+
+### 12.2 Results
+
+| Model | JSON valid | Empty | Recall | Atomic facts | Language | Halluc. | Time/run |
+|---|---|---|---|---|---|---|---|
+| **gemma-4-E2B-it** | 20/20 | 0 | **50/52 = 96 %** | 26/26 | 16/20 | 0 | 358 ms |
+| Qwen3.5-9B | 20/20 | **2** | 46/52 = 88 % | 20/22 | 16/20 | 0 | 810 ms |
+| Qwen3-4B-Instruct | 20/20 | 0 | 44/52 = 85 % | 24/24 | 8/20 | 0 | 255 ms |
+
+### 12.3 What the models produced
+
+gemma-4-E2B, German input — correct language, atomic facts, no
+hallucination:
+
+```
+- Nutzt eine NVIDIA RTX 3060 mit 12 GB VRAM für lokale Modelle
+- Mem0 läuft komplett lokal, ohne Cloud
+- Der Vektorstore ist Qdrant im embedded Modus
+```
+
+Qwen3.5-9B, same input — English output for a German question, and one
+fact merged into another:
+
+```
+- Uses NVIDIA RTX 3060 with 12 GB VRAM for local models
+- Mem0 runs completely locally without cloud
+- Vectorstore is Qdrant in embedded mode
+```
+
+### 12.4 Findings
+
+1. **The smallest model extracts best.** 96 % recall against the 9B's
+   88 %, zero hallucinations, perfect atomicity, 2.3× faster.
+2. **The 9B has a silent failure mode.** It returned an empty fact list in
+   2 of 20 runs. Nothing is stored, nothing errors. Same failure class as
+   the context floor: a healthy-looking service that does not work.
+3. **The 4B breaks language fidelity.** Only 8/20 answers came back in the
+   input's language, against 16/20 for the other two. mem0's prompt
+   explicitly asks for facts in the input's language.
+
+### 12.5 Conclusion
+
+The catalogue ranks by measured extraction capability, not parameter count.
+Chat quality is a tiebreaker only — the service's primary function is
+storage. A user who wants a stronger chat model pins one explicitly.
+
+
 
