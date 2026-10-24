@@ -402,16 +402,74 @@ below the floor of 12 288 — while the 4B with a `q8_0` cache reached
 92 273. The cache type is now the outer loop: every model at `q8_0`
 first, then every model at `f16`, then every model at `q4_0`.
 
-### 8a.3 Re-check after the fix
+### 8a.3 What the run found
 
-The same flags, planned by the corrected planner:
+**The buffer lines name a device, and the host line comes first.**
+
+The log carries one line per device:
 
 ```
-n_ctx 67072  (67072 per slot, 2 slots)
+load_tensors:   CPU_Mapped model buffer size = 1030.62 MiB
+load_tensors:        CUDA0 model buffer size = 8055.38 MiB
+llama_kv_cache:        CUDA0 KV buffer size = 1113.50 MiB
+sched_reserve:      CUDA0 compute buffer size =   391.79 MiB
 ```
 
-The server accepted the value unchanged and reported `n_ctx_slot =
-67072`. The plan and the server now agree exactly.
+A pattern that takes the first match finds the `CPU_Mapped` line. The
+memory-mapped part of the model is **host RAM**, not VRAM. The first
+version of the script did exactly that and reported 1030 MiB of
+weights where the card held 8087 MiB.
+
+The two numbers add up exactly: 1030.62 + 8055.38 = 9086.00 MiB, the
+size of Qwen3.5-9B-Q8_0. The model was fully loaded all along.
+
+**One VRAM reading is a moment, not the allocation.**
+
+The measurement took a single `nvidia-smi` sample while the server was
+still allocating and reported a delta of 3804 MiB. The card actually
+held about 9560 MiB. The measurement now samples repeatedly and keeps
+the highest value.
+
+**The script never wrote a log.**
+
+The numbers were printed and then lost. The next run could not be
+compared against the previous one, and the first run with a wrong
+figure could not be diagnosed. The server log now goes to
+`results/server.log`.
+
+### 8a.4 The re-check
+
+The same checks, after the fix, with the 4B model on the GPU:
+
+```
+  n_ctx_slot         16384 (the -c value, per slot)
+  layers to GPU      37 / 37
+  model buffer       2375.91 MiB (CUDA0)
+  model buffer       304.28 MiB (CPU_Mapped, host RAM - not VRAM)
+  compute buffer     116.09 MiB
+  KV buffer          1224.00 MiB
+  GPU usage delta    3830 MiB (7175 -> 11005, measured while the server ran)
+
+KV delta: 1224 measured vs 1224 predicted (0 MiB)
+weights delta: 2376 measured vs 2453 predicted (77 MiB)
+n_ctx_slot matches the plan (16384)
+inference: the server generated a response
+
+The plan matches the measurement.
+```
+
+| Quantity | Predicted | Measured | |
+|---|---|---|---|
+| KV cache | 1224 MiB | 1224 MiB | ✓ exact |
+| Weights (CUDA0) | 2453 MiB | 2376 MiB | 3 % off |
+| Slot context | 16384 | 16384 | ✓ exact |
+| Layers to the GPU | 37 / 37 | 37 / 37 | ✓ |
+| Inference | — | response received | ✓ |
+
+The run also reports how many layers reached the GPU. A partial
+offload means the card did not have room for the planned configuration,
+and the budget cannot be verified in that case — the script says so
+instead of producing a misleading comparison.
 
 ---
 

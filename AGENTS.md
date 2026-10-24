@@ -77,6 +77,20 @@ docs/
   `scripts/verify_plan.py` sends a completion request and reports the
   answer; an embedding-only server is reported as "not applicable",
   not as a failure.
+- **Log lines name a device — read the right one.** llama.cpp prints
+  one buffer line per device, and the host line comes first:
+  `CPU_Mapped model buffer size` before `CUDA0 model buffer size`.
+  A pattern that takes the first match reports host RAM as VRAM. The
+  two add up to the file size, which is the check.
+- **One VRAM reading is a moment, not the allocation.** The server
+  keeps allocating after it reports the model as loaded. Sample
+  repeatedly and keep the highest value.
+- **Check how many layers reached the GPU.** A partial offload means
+  the card did not have room for the planned configuration, and the
+  budget cannot be verified in that case.
+- **A measurement that is not written down is lost.** The verification
+  writes its server log to `results/server.log`, so a later run can be
+  compared against an earlier one and a wrong figure can be traced.
 - **The KV cache layout decides what `-c` means.** With
   `--kv-unified` it is the context per slot and the pool is shared;
   without it, it is the total and each slot gets its own pool. See

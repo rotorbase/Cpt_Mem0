@@ -31,7 +31,7 @@ No GPU, no model, no network. Safe at any time, from any directory.
 
     bash "C:/Users/willow/Documents/Cpt_Mem0/test.sh"
 
-Expected: `84 passed`, total under two seconds.
+Expected: `92 passed`, total under fifteen seconds.
 
 The same thing with the full path to the interpreter, if you prefer:
 
@@ -140,7 +140,7 @@ or directly:
 
     "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" -m pytest "C:/Users/willow/Documents/Cpt_Mem0/tests" -q
 
-84 tests, about ten seconds. They cover:
+92 tests, about ten seconds. They cover:
 
 | Area | What is checked |
 |---|---|
@@ -167,7 +167,7 @@ Measured on this machine, three runs each:
 
 | Command | Duration |
 |---|---|
-| `pytest tests/ -q` | 10,2 s (84 tests) |
+| `pytest tests/ -q` | 10,3 s (92 tests) |
 | `python scripts/run_tests.py` | 0,48 – 0,49 s |
 | `python scripts/regenerate_tiers.py` | 0,09 s |
 | `cpt-mem0 plan` | 0,04 – 0,05 s |
@@ -176,7 +176,7 @@ Measured on this machine, three runs each:
 The hardware verification takes as long as the model needs to load —
 45 s for a 9B on this card, plus a few seconds of measurement.
 
-The logic suite grew from 0,4 s to 10,2 s because the verification tests
+The logic suite grew from 0,4 s to 10,3 s because the verification tests
 now start a real llama-server on the CPU (`-ngl 0`) to prove the
 liveness check works. That keeps the graphics card free.
 

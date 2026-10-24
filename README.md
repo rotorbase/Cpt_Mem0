@@ -83,7 +83,7 @@ The test suite is pure logic: it reads no GPU and starts no model.
 
 ```
 $ pytest
-84 passed
+92 passed
 ```
 
 There is a second suite that does need a free card — it starts one
