@@ -62,10 +62,9 @@ from cpt_mem0.planner import (  # noqa: E402
 #:   '%s: %10s compute buffer size = %8.2f MiB'
 #:   '%s: %12s model buffer size = %8.2f MiB'
 #:
-#: The prefix is the backend name, e.g. "CUDA0".
-KV_RE = re.compile(r"KV buffer size\s*=\s*([0-9.]+)\s*MiB")
-MODEL_BUFFER_RE = re.compile(r"model buffer size\s*=\s*([0-9.]+)\s*MiB")
-COMPUTE_RE = re.compile(r"compute buffer size\s*=\s*([0-9.]+)\s*MiB")
+#: The prefix is the backend name, e.g. "CUDA0" or "CPU_Mapped". The
+#: patterns that name the device live further down, together with the
+#: reason they have to.
 #: The server prints "initializing, n_slots = %d, n_ctx_slot = %d" and
 #: the model context in several places. The slot context is the one the
 #: planner predicted, so it is what the comparison needs.
@@ -117,6 +116,42 @@ def gpu_used_mib() -> int | None:
         return None
 
 
+def peak_gpu_usage(samples: int = 8,
+                   interval: float = 0.5) -> int | None:
+    """The highest VRAM usage seen while the server is running.
+
+    A single reading of ``nvidia-smi`` is not the allocation: the
+    server keeps allocating after it reports the model as loaded, and a
+    single sample caught a run at 3804 MiB while the model alone held
+    8055 MiB on the card. Sampling several times and keeping the
+    highest value measures the peak instead of a moment.
+
+    The sampling stops early when the value has not changed for two
+    rounds - there is no point in waiting for a number that will not
+    move.
+    """
+    peak = gpu_used_mib()
+    if peak is None:
+        return None
+    stable = 0
+    previous = peak
+    for _ in range(samples):
+        time.sleep(interval)
+        current = gpu_used_mib()
+        if current is None:
+            break
+        if current > peak:
+            peak = current
+        if current == previous:
+            stable += 1
+            if stable >= 2:
+                break
+        else:
+            stable = 0
+        previous = current
+    return peak
+
+
 #: Markers that mean "the server is up and serving".
 #:
 #: The exact wording depends on the llama.cpp build. Verified against
@@ -148,16 +183,44 @@ LOADED_MARKERS = (
 #:
 #: Verified on llama.cpp 0.7.0-dev (build 11798): with the default
 #: verbosity the log contains "model loaded" but no "buffer size" line
-#: at all. With ``--verbose`` it contains
-#:
-#: ==========================  =====================
-#: Line                       Matched by
-#: ==========================  =====================
-#: ``CUDA0 model buffer size`` ``MODEL_BUFFER_RE``
-#: ``CUDA0 compute buffer``    ``COMPUTE_RE``
-#: ``CUDA0 KV buffer size``    ``KV_RE``
-#: ==========================  =====================
+#: at all.
 VERBOSE_FLAG = "--verbose"
+
+#: The server reports one buffer line per device, and the order in the
+#: log is not the order of importance:
+#:
+#: ==========================  ==================  =============
+#: Line                       Device               Counts as VRAM
+#: ==========================  ==================  =============
+#: ``CPU_Mapped model buffer``  host, memory-mapped  no
+#: ``CUDA0 model buffer``       the GPU              yes
+#: ``CUDA0 KV buffer``          the GPU              yes
+#: ``CUDA_Host compute``        the host             no
+#: ``CUDA0 compute``            the GPU              yes
+#: ==========================  ==================  =============
+#:
+#: A first version of these patterns took the first match in the log,
+#: which is the ``CPU_Mapped`` line. It reported 1030 MiB of weights
+#: for a model whose GPU allocation was 8087 MiB. The patterns now
+#: name the device.
+MODEL_BUFFER_RE = re.compile(
+    r"CUDA0\s+model buffer size\s*=\s*([0-9.]+)\s*MiB")
+KV_RE = re.compile(
+    r"CUDA0\s+KV buffer size\s*=\s*([0-9.]+)\s*MiB")
+COMPUTE_RE = re.compile(
+    r"CUDA0\s+compute buffer size\s*=\s*([0-9.]+)\s*MiB")
+
+#: The memory-mapped part of the model stays in host RAM. It is not
+#: VRAM, but it is part of the model's footprint, so it is reported
+#: separately.
+CPU_MAPPED_RE = re.compile(
+    r"CPU_Mapped\s+model buffer size\s*=\s*([0-9.]+)\s*MiB")
+
+#: How many layers went to the GPU. When this is fewer than the model
+#: has, the server had to keep the rest in host RAM - and the planned
+#: VRAM does not apply.
+OFFLOAD_RE = re.compile(
+    r"offloaded\s+(\d+)\s*/\s*(\d+)\s+layers to GPU")
 
 
 def wait_for_http(port: int, timeout: float = 1.0) -> bool:
@@ -398,6 +461,9 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=90,
                         help="seconds to wait for the server (0 = no limit)")
     parser.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
+    parser.add_argument("--results-dir",
+                        help="where to write the server log "
+                             "(default: <repo>/results)")
     args = parser.parse_args()
 
     catalogue = load_catalogue(args.catalogue)
@@ -466,9 +532,15 @@ def main() -> int:
         afterwards gives a difference of zero. The log is parsed here
         too, because the server's output buffer is only flushed while
         it runs.
+
+        The VRAM is sampled several times and the highest value is
+        kept. A single reading is not enough: the allocation continues
+        after the server reports the model as loaded, and one run
+        measured 3804 MiB while the model alone had 8055 MiB on the
+        card.
         """
         measured["log"] = log_so_far
-        measured["gpu_used"] = gpu_used_mib()
+        measured["gpu_used"] = peak_gpu_usage()
         # Prove the server can actually generate. A server that answers
         # /health has not proven that.
         ok, detail = run_inference(args.port)
@@ -485,6 +557,20 @@ def main() -> int:
                         on_ready=_measure_while_running)
     after = gpu_used_mib()
 
+    # Write the server log next to the other results. Without it the
+    # numbers below cannot be checked afterwards - and the first run
+    # that reported a wrong weight figure could not be diagnosed
+    # because the log was gone.
+    results_dir = Path(args.results_dir) if args.results_dir else (
+        Path(__file__).resolve().parent.parent / "results")
+    try:
+        results_dir.mkdir(parents=True, exist_ok=True)
+        log_path = results_dir / "server.log"
+        log_path.write_text(log, encoding="utf-8")
+        print(f"\nserver log: {log_path}", flush=True)
+    except OSError as exc:
+        print(f"\ncould not write the server log: {exc}", flush=True)
+
     # Prefer what was captured while the server ran; fall back to the
     # full log for the values that are printed later.
     full_log = log if len(log) > len(measured.get("log", "")) else log
@@ -495,14 +581,24 @@ def main() -> int:
     model_match = MODEL_BUFFER_RE.search(measured_log)
     compute_match = COMPUTE_RE.search(measured_log)
     context_match = CONTEXT_RE.search(measured_log)
+    cpu_mapped_match = CPU_MAPPED_RE.search(measured_log)
+    offload_match = OFFLOAD_RE.search(measured_log)
 
     print()
     print("measured from the server log:", flush=True)
     if context_match:
         print(f"  n_ctx_slot         {context_match.group(1)} "
               f"(the -c value, per slot)", flush=True)
+    if offload_match:
+        offloaded = int(offload_match.group(1))
+        total_layers = int(offload_match.group(2))
+        print(f"  layers to GPU      {offloaded} / {total_layers}", flush=True)
     if model_match:
-        print(f"  model buffer       {model_match.group(1)} MiB", flush=True)
+        print(f"  model buffer       {model_match.group(1)} MiB "
+              f"(CUDA0)", flush=True)
+    if cpu_mapped_match:
+        print(f"  model buffer       {cpu_mapped_match.group(1)} MiB "
+              f"(CPU_Mapped, host RAM - not VRAM)", flush=True)
     if compute_match:
         print(f"  compute buffer     {compute_match.group(1)} MiB", flush=True)
     if kv_match:
@@ -522,6 +618,19 @@ def main() -> int:
     print(f"  embedder           {embedder_mib(candidate):.0f} MiB", flush=True)
 
     problems: list[str] = []
+    if offload_match:
+        offloaded = int(offload_match.group(1))
+        total_layers = int(offload_match.group(2))
+        if offloaded < total_layers:
+            # The server had to keep layers in host RAM. The planned
+            # VRAM was not available - probably because something else
+            # was on the card. Every comparison below is against a
+            # configuration the planner never intended, so the budget
+            # cannot be checked here.
+            problems.append(
+                f"only {offloaded} of {total_layers} layers went to the "
+                f"GPU - the card did not have room for the planned "
+                f"configuration, so the budget could not be verified")
     if kv_match:
         measured_kv = float(kv_match.group(1))
         delta = abs(measured_kv - candidate.kv_vram_mib)

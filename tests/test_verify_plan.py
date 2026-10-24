@@ -63,9 +63,44 @@ class TestBufferSizeLines:
         '%s: %10s compute buffer size = %8.2f MiB'
         '%s: %12s model buffer size = %8.2f MiB'
         """
-        assert vp.MODEL_BUFFER_RE.search("CUDA0 model buffer size = 8045.05 MiB")
+        assert vp.MODEL_BUFFER_RE.search(
+            "CUDA0 model buffer size = 8045.05 MiB")
         assert vp.KV_RE.search("CUDA0 KV buffer size = 1117.80 MiB")
         assert vp.COMPUTE_RE.search("CUDA0 compute buffer size = 290.00 MiB")
+
+    def test_the_patterns_ignore_the_cpu_mapped_line(self):
+        """The log carries one line per device, and the host line comes
+        first:
+
+            load_tensors:   CPU_Mapped model buffer size = 12.58 MiB
+            load_tensors:        CUDA0 model buffer size = 66.92 MiB
+
+        A pattern that takes the first match reports the memory-mapped
+        part of the model and calls it the GPU allocation. It reported
+        1030 MiB where the GPU held 8087 MiB.
+        """
+        log = ("load_tensors:   CPU_Mapped model buffer size =    12.58 MiB\n"
+               "load_tensors:        CUDA0 model buffer size =    66.92 MiB\n")
+
+        assert vp.CPU_MAPPED_RE.search(log).group(1) == "12.58"
+        assert vp.MODEL_BUFFER_RE.search(log).group(1) == "66.92"
+
+    def test_the_cpu_line_is_not_mistaken_for_the_gpu_line(self):
+        log = "load_tensors:   CPU_Mapped model buffer size = 1030.62 MiB"
+        assert vp.MODEL_BUFFER_RE.search(log) is None
+
+    def test_the_compute_pattern_ignores_the_host_line(self):
+        """``CUDA_Host compute buffer`` is host RAM."""
+        log = ("sched_reserve:  CUDA_Host compute buffer size =    6.52 MiB\n"
+               "sched_reserve:      CUDA0 compute buffer size =   24.52 MiB\n")
+        assert vp.COMPUTE_RE.search(log).group(1) == "24.52"
+
+    def test_the_offload_pattern_reads_the_layer_count(self):
+        line = "load_tensors: offloaded 24/37 layers to GPU"
+        match = vp.OFFLOAD_RE.search(line)
+        assert match is not None
+        assert match.group(1) == "24"
+        assert match.group(2) == "37"
 
     def test_the_context_pattern_matches_the_real_line(self):
         line = ("srv    load_model: initializing, n_slots = 2, "
@@ -146,6 +181,41 @@ class TestMeasuredValuesAreUsed:
         measured - otherwise it cannot be acted on."""
         source = _SCRIPT.read_text(encoding="utf-8")
         assert "n_ctx_slot {measured_slot} != planned" in source
+
+
+class TestPeakMeasurement:
+    """A single VRAM reading is a moment, not the allocation.
+
+    The server keeps allocating after it reports the model as loaded.
+    One run measured a delta of 3804 MiB while the model alone held
+    8055 MiB on the card - the sampling happened before the allocation
+    had finished.
+    """
+
+    def test_the_function_exists(self):
+        assert callable(vp.peak_gpu_usage)
+
+    def test_it_keeps_the_highest_value(self, monkeypatch):
+        values = iter([100, 500, 300, 900, 900, 900])
+        monkeypatch.setattr(vp, "gpu_used_mib", lambda: next(values, 900))
+        assert vp.peak_gpu_usage(samples=4, interval=0.0) == 900
+
+    def test_it_stops_when_the_value_is_stable(self, monkeypatch):
+        """Waiting for a number that will not move is wasted time."""
+        calls = []
+
+        def fake():
+            calls.append(1)
+            return 500
+
+        monkeypatch.setattr(vp, "gpu_used_mib", fake)
+        vp.peak_gpu_usage(samples=20, interval=0.0)
+        # The first reading plus two stable rounds, then it stops.
+        assert len(calls) <= 4
+
+    def test_it_returns_none_without_a_gpu(self, monkeypatch):
+        monkeypatch.setattr(vp, "gpu_used_mib", lambda: None)
+        assert vp.peak_gpu_usage(samples=2, interval=0.0) is None
 
 
 class TestNoHardcodedPaths:
