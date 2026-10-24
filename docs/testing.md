@@ -33,6 +33,16 @@ Expected: `49 passed`, total under one second.
 memory stack running, the two compete for the card and the measurement
 is meaningless.
 
+**What you should see:** the planned configuration, then the server
+command, then roughly 45 seconds of model loading, then the measured
+values and the comparison.
+
+If it produces **no output at all**, the server aborted while parsing
+its arguments — before it loaded anything. That is a flag problem, not
+a hardware problem: check the flags against `llama-server --help`. The
+test suite does this automatically (`tests/test_launch_flags.py`), so a
+flag that llama.cpp does not know fails the tests.
+
 With the 4B model:
 
 ```bash
