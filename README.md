@@ -88,7 +88,8 @@ $ pytest
 
 There is a second suite that does need a free card — it starts one
 `llama-server` with the planned flags and compares the allocation
-against the prediction. See [docs/testing.md](docs/testing.md).
+against the prediction. Step-by-step commands are in
+[docs/testing.md](docs/testing.md).
 
 See [SPEC.md](SPEC.md) for the full design and the open questions.
 

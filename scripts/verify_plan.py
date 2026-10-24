@@ -61,14 +61,29 @@ CONTEXT_RE = re.compile(r"n_ctx\s*=\s*([0-9]+)")
 
 
 def find_llama_server() -> str | None:
+    """Locate the llama-server binary.
+
+    Search order: PATH, then the usual llama.cpp build directories.
+    The Unsloth studio keeps its build in
+    ``~/.unsloth/llama.cpp/build/bin/<config>/llama-server.exe``.
+    """
     exe = shutil.which("llama-server")
     if exe:
         return exe
-    for base in (Path.home() / ".unsloth/studio/bin", Path.home() / "bin"):
-        if base.is_dir():
-            for path in sorted(base.glob("*/llama-server.exe")):
-                return str(path)
-            for path in sorted(base.glob("*/llama-server")):
+
+    home = Path.home()
+    patterns = [
+        home / ".unsloth/llama.cpp/build/bin/*/llama-server.exe",
+        home / ".unsloth/llama.cpp/build/bin/*/llama-server",
+        home / "llama.cpp/build/bin/*/llama-server.exe",
+        home / ".cache/llama.cpp/build/bin/*/llama-server",
+        home / ".unsloth/studio/bin/*/llama-server.exe",
+    ]
+    for pattern in patterns:
+        # ``pattern`` contains a wildcard in a directory part, so glob the
+        # whole pattern rather than its parent.
+        for path in sorted(home.glob(str(pattern.relative_to(home)))):
+            if path.is_file():
                 return str(path)
     return None
 
