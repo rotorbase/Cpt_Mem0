@@ -1,0 +1,370 @@
+{
+  "version": 1,
+  "updated": "2026-10-24",
+  "models": [
+    {
+      "id": "Qwen3.5-9B",
+      "repo": "unsloth/Qwen3.5-9B-GGUF",
+      "params": 9000000000,
+      "architecture": "qwen35",
+      "license": "apache-2.0",
+      "rank_order": 10,
+      "notes": "Hybrid architecture (full_attention_interval=4). KV constant measured on 8 server logs - see docs/verification.md section 1.2.",
+      "quantisations": [
+        {
+          "name": "Q8_0",
+          "file": "Qwen3.5-9B-Q8_0.gguf",
+          "size_bytes": 9527502048,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q6_K",
+          "file": "Qwen3.5-9B-Q6_K.gguf",
+          "size_bytes": 7458301152,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q5_K_M",
+          "file": "Qwen3.5-9B-Q5_K_M.gguf",
+          "size_bytes": 6577841376,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen3.5-9B-Q4_K_M.gguf",
+          "size_bytes": 5680522464,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        },
+        {
+          "name": "IQ4_XS",
+          "file": "Qwen3.5-9B-IQ4_XS.gguf",
+          "size_bytes": 5168653536,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        },
+        {
+          "name": "IQ3_XXS",
+          "file": "Qwen3.5-9B-UD-IQ3_XXS.gguf",
+          "size_bytes": 4016235744,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        }
+      ],
+      "geometry": {
+        "architecture": "qwen35",
+        "block_count": 32,
+        "full_attention_interval": 4,
+        "n_kv_heads": 4,
+        "key_length": 256,
+        "value_length": 256
+      },
+      "kv_bytes_per_token_f16": 32768
+    },
+    {
+      "id": "Qwen3-8B",
+      "repo": "unsloth/Qwen3-8B-GGUF",
+      "params": 8000000000,
+      "architecture": "qwen3",
+      "license": "apache-2.0",
+      "rank_order": 20,
+      "quantisations": [
+        {
+          "name": "Q8_0",
+          "file": "Qwen3-8B-Q8_0.gguf",
+          "size_bytes": 8709519168,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q6_K",
+          "file": "Qwen3-8B-Q6_K.gguf",
+          "size_bytes": 6725900096,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q5_K_M",
+          "file": "Qwen3-8B-Q5_K_M.gguf",
+          "size_bytes": 5851113280,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen3-8B-Q4_K_M.gguf",
+          "size_bytes": 5027784512,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        },
+        {
+          "name": "IQ4_XS",
+          "file": "Qwen3-8B-IQ4_XS.gguf",
+          "size_bytes": 4581287744,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        },
+        {
+          "name": "IQ3_XXS",
+          "file": "Qwen3-8B-UD-IQ3_XXS.gguf",
+          "size_bytes": 3410265920,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        }
+      ],
+      "geometry": {
+        "architecture": "qwen3",
+        "block_count": 36,
+        "full_attention_interval": 1,
+        "n_kv_heads": 8,
+        "key_length": 128,
+        "value_length": 128
+      },
+      "kv_bytes_per_token_f16": 147456
+    },
+    {
+      "id": "Llama-3.1-8B-Instruct",
+      "repo": "unsloth/Llama-3.1-8B-Instruct-GGUF",
+      "params": 8000000000,
+      "architecture": "llama",
+      "license": "llama3.1",
+      "rank_order": 30,
+      "quantisations": [
+        {
+          "name": "Q6_K",
+          "file": "Llama-3.1-8B-Instruct-Q6_K.gguf",
+          "size_bytes": 6596011392,
+          "kv_bytes_per_token": 131072,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q5_K_M",
+          "file": "Llama-3.1-8B-Instruct-Q5_K_M.gguf",
+          "size_bytes": 5732992384,
+          "kv_bytes_per_token": 131072,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q4_K_M",
+          "file": "Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+          "size_bytes": 4920739200,
+          "kv_bytes_per_token": 131072,
+          "kv_source": "measured"
+        },
+        {
+          "name": "IQ4_XS",
+          "file": "Llama-3.1-8B-Instruct-IQ4_XS.gguf",
+          "size_bytes": 4464084352,
+          "kv_bytes_per_token": 131072,
+          "kv_source": "measured"
+        },
+        {
+          "name": "IQ3_XXS",
+          "file": "Llama-3.1-8B-Instruct-UD-IQ3_XXS.gguf",
+          "size_bytes": 3321775488,
+          "kv_bytes_per_token": 131072,
+          "kv_source": "measured"
+        }
+      ],
+      "geometry": {
+        "architecture": "llama",
+        "block_count": 32,
+        "full_attention_interval": 1,
+        "n_kv_heads": 8,
+        "key_length": 128,
+        "value_length": 128
+      },
+      "kv_bytes_per_token_f16": 131072
+    },
+    {
+      "id": "gemma-4-E2B-it",
+      "repo": "unsloth/gemma-4-E2B-it-GGUF",
+      "params": 2000000000,
+      "architecture": "gemma4",
+      "license": "gemma",
+      "rank_order": 5,
+      "notes": "Sliding-window and shared-KV architecture: the closed-form KV calculation does not apply. Requires calibration (SPEC section 4.3). Extraction measurement pending.",
+      "quantisations": [
+        {
+          "name": "Q8_0",
+          "file": "gemma-4-E2B-it-Q8_0.gguf",
+          "size_bytes": 5048352864,
+          "kv_bytes_per_token": null,
+          "kv_source": "calibrate"
+        },
+        {
+          "name": "Q6_K",
+          "file": "gemma-4-E2B-it-Q6_K.gguf",
+          "size_bytes": 4501721184,
+          "kv_bytes_per_token": null,
+          "kv_source": "calibrate"
+        },
+        {
+          "name": "Q5_K_M",
+          "file": "gemma-4-E2B-it-Q5_K_M.gguf",
+          "size_bytes": 3356037216,
+          "kv_bytes_per_token": null,
+          "kv_source": "calibrate"
+        },
+        {
+          "name": "Q4_K_M",
+          "file": "gemma-4-E2B-it-Q4_K_M.gguf",
+          "size_bytes": 3106738272,
+          "kv_bytes_per_token": null,
+          "kv_source": "calibrate"
+        },
+        {
+          "name": "IQ4_XS",
+          "file": "gemma-4-E2B-it-IQ4_XS.gguf",
+          "size_bytes": 2983944288,
+          "kv_bytes_per_token": null,
+          "kv_source": "calibrate"
+        },
+        {
+          "name": "IQ3_XXS",
+          "file": "gemma-4-E2B-it-UD-IQ3_XXS.gguf",
+          "size_bytes": 2372993120,
+          "kv_bytes_per_token": null,
+          "kv_source": "calibrate"
+        }
+      ],
+      "geometry": {
+        "architecture": "gemma4",
+        "block_count": 35,
+        "full_attention_interval": 1,
+        "n_kv_heads": 1,
+        "key_length": 512,
+        "value_length": 512,
+        "sliding_window": 512,
+        "shared_kv_layers": 20
+      },
+      "kv_bytes_per_token_f16": null
+    },
+    {
+      "id": "Qwen3.5-4B",
+      "repo": "unsloth/Qwen3.5-4B-GGUF",
+      "params": 4000000000,
+      "architecture": "qwen35",
+      "license": "apache-2.0",
+      "rank_order": 15,
+      "quantisations": [
+        {
+          "name": "Q8_0",
+          "file": "Qwen3.5-4B-Q8_0.gguf",
+          "size_bytes": 4482403488,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q6_K",
+          "file": "Qwen3.5-4B-Q6_K.gguf",
+          "size_bytes": 3525956768,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q5_K_M",
+          "file": "Qwen3.5-4B-Q5_K_M.gguf",
+          "size_bytes": 3143656608,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen3.5-4B-Q4_K_M.gguf",
+          "size_bytes": 2740937888,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        },
+        {
+          "name": "IQ4_XS",
+          "file": "Qwen3.5-4B-IQ4_XS.gguf",
+          "size_bytes": 2477053088,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        },
+        {
+          "name": "IQ3_XXS",
+          "file": "Qwen3.5-4B-UD-IQ3_XXS.gguf",
+          "size_bytes": 1949047968,
+          "kv_bytes_per_token": 32768,
+          "kv_source": "measured"
+        }
+      ],
+      "geometry": {
+        "architecture": "qwen35",
+        "block_count": 32,
+        "full_attention_interval": 4,
+        "n_kv_heads": 4,
+        "key_length": 256,
+        "value_length": 256
+      },
+      "kv_bytes_per_token_f16": 32768
+    },
+    {
+      "id": "Qwen3-4B-Instruct-2507",
+      "repo": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      "params": 4000000000,
+      "architecture": "qwen3",
+      "license": "apache-2.0",
+      "rank_order": 25,
+      "notes": "Smallest model with a viable context floor on a 5 GB card.",
+      "quantisations": [
+        {
+          "name": "Q8_0",
+          "file": "Qwen3-4B-Instruct-2507-Q8_0.gguf",
+          "size_bytes": 4280405600,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q6_K",
+          "file": "Qwen3-4B-Instruct-2507-Q6_K.gguf",
+          "size_bytes": 3306261600,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q5_K_M",
+          "file": "Qwen3-4B-Instruct-2507-Q5_K_M.gguf",
+          "size_bytes": 2889514080,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        },
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "size_bytes": 2497281120,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        },
+        {
+          "name": "IQ4_XS",
+          "file": "Qwen3-4B-Instruct-2507-IQ4_XS.gguf",
+          "size_bytes": 2270751840,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        },
+        {
+          "name": "IQ3_XXS",
+          "file": "Qwen3-4B-Instruct-2507-UD-IQ3_XXS.gguf",
+          "size_bytes": 1674376800,
+          "kv_bytes_per_token": 147456,
+          "kv_source": "measured"
+        }
+      ],
+      "geometry": {
+        "architecture": "qwen3",
+        "block_count": 36,
+        "full_attention_interval": 1,
+        "n_kv_heads": 8,
+        "key_length": 128,
+        "value_length": 128
+      },
+      "kv_bytes_per_token_f16": 147456
+    }
+  ]
+}

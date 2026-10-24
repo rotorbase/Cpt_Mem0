@@ -235,10 +235,27 @@ defaults are the measured values.
 | Cache type | KV size (16 384 tokens) | Note |
 |---|---|---|
 | `f16` | 512 MiB | default |
-| `q8_0` | 288 MiB | minimal quality loss — **recommended default** |
+| `q8_0` | 272 MiB | minimal quality loss — **recommended default** |
 | `q4_0` | 144 MiB | larger loss on the value cache |
 
 Halving the KV cost doubles the context for the same VRAM.
+
+**Derivation of the quantised sizes.** The block layouts are llama.cpp's,
+read from `ggml/src/ggml-common.h` (`block_q8_0`, `block_q4_0`):
+
+| Type | Block | Bytes per 32 values | Bytes per value | Share of f16 |
+|---|---|---|---|---|
+| `f16` | 2 B half | 64 | 2.0 | 100 % |
+| `q8_0` | 2 B half scale + 32 B int8 | 34 | 1.0625 | 53.125 % |
+| `q4_0` | 2 B half scale + 16 B nibbles | 18 | 0.5625 | 28.125 % |
+
+`llama_kv_cache` allocates K and V as `ggml_new_tensor_3d(type, n_embd_gqa,
+kv_size, n_stream)`, so the row size follows `ggml_row_size` exactly —
+no additional padding applies for `n_embd_gqa` divisible by 32.
+
+These constants are implemented in `src/cpt_mem0/planner.py`
+(`CACHE_ELEMENT_BYTES`) and asserted by
+`tests/test_planner.py::TestKvCacheScaling`.
 
 ### 4.6 `--fit` must be disabled
 

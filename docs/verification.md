@@ -86,7 +86,48 @@ Corrected formula with `kv_layers = block_count ÷ full_attention_interval`:
 Qwen3.5 is a hybrid architecture: only every fourth layer has full
 attention, the rest are Mamba/SSM layers with constant-size recurrent state.
 
-### 1.5 BERT architectures do not follow the per-layer formula
+### 1.5 Measured geometry of every catalogue model
+
+The KV constant of each model follows from its GGUF header. All values
+below were read with the tool's own reader (`src/cpt_mem0/gguf.py`),
+either from a local file or through an HTTP range request against the
+HuggingFace repository — no model was downloaded and no GPU was involved.
+
+| Model | arch | `block_count` | `full_attention_interval` | `kv_layers` | `head_count_kv` | key/value length | **KV f16 (B/token)** |
+|---|---|---|---|---|---|---|---|
+| Qwen3.5-9B | `qwen35` | 32 | 4 | 8 | 4 | 256 / 256 | **32 768** |
+| Qwen3.5-4B | `qwen35` | 32 | 4 | 8 | 4 | 256 / 256 | **32 768** |
+| Qwen3-8B | `qwen3` | 36 | 1 | 36 | 8 | 128 / 128 | **147 456** |
+| Qwen3-4B-Instruct-2507 | `qwen3` | 36 | 1 | 36 | 8 | 128 / 128 | **147 456** |
+| Llama-3.1-8B-Instruct | `llama` | 32 | 1 | 32 | 8 | 128 / 128 | **131 072** |
+| gemma-4-E2B-it | `gemma4` | 35 | 1 | 35 | 1 | 512 / 512 | *(not reliable)* |
+
+`gemma-4-E2B-it` carries `attention.sliding_window = 512` and
+`attention.shared_kv_layers = 20`, so the closed form does not apply.
+The catalogue marks it `calibrate` instead of guessing, and the planner
+reports it as needing calibration.
+
+### 1.6 Quantised KV cache sizes
+
+The `q8_0` and `q4_0` factors are llama.cpp's block layouts, read from
+`ggml/src/ggml-common.h`:
+
+| Type | Block | Bytes per 32 values | Bytes per value | Share of f16 |
+|---|---|---|---|---|
+| `f16` | 2 B half | 64 | 2.0 | 100 % |
+| `q8_0` | 2 B half scale + 32 B int8 | 34 | 1.0625 | 53.125 % |
+| `q4_0` | 2 B half scale + 16 B nibbles | 18 | 0.5625 | 28.125 % |
+
+`llama_kv_cache` allocates K and V as `ggml_new_tensor_3d(type,
+n_embd_gqa, kv_size, n_stream)`; `ggml_row_size` then gives
+`type_size × ne ÷ blck_size`, with no further padding for
+`n_embd_gqa` divisible by 32.
+
+> **Correction (2026-10-24).** The factor for `q8_0` was previously
+> estimated at 1.125 bytes per value — 5.9 % too pessimistic, which made
+> every context figure in §9.2 too small. The correct value is 1.0625.
+
+### 1.7 BERT architectures do not follow the per-layer formula
 
 `nomic-embed-text-v1.5` (nomic-bert, 12 layers) and `gemma-4-E2B-it`
 (gemma4, 35 layers, sliding window) both report:
@@ -315,22 +356,36 @@ in the specification.
 
 ### 9.2 Card tiers with the floor enforced
 
-Computed with the planner's budget model, KV `q8_0`, 2 slots, embedder on GPU:
+**Regenerated from the planner** (`scripts/regenerate_tiers.py`), so these
+numbers come out of the shipped code rather than a scratch script.
+
+Cascade order per SPEC section 4.4: best model that fits, then best
+quantisation, then best KV cache type. Embedder on GPU, 2 slots:
 
 | VRAM | Configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B-Q4_K_M | 249 146 | 124 573 |
-| 12 GB | Qwen3.5-9B-Q8_0 | 63 392 | 31 696 |
-| 8 GB | Qwen3.5-9B-Q4_K_M | 51 798 | 25 899 |
-| 8 GB | gemma-4-E2B-Q4_XL | 78 774 | 39 387 |
-| 6 GB | gemma-4-E2B-Q4_XL | 34 044 | 17 022 |
-| 6 GB | Qwen3-4B-Instruct-Q4 | 23 922 | 11 961 |
-| 5 GB | Qwen3-4B-Instruct-Q4, KV `q4_0` | 26 076 | 13 038 |
-| 4 GB | **no viable configuration** | — | — |
+| 12 GB | Qwen3.5-9B-Q8_0 | 67 122 | 33 561 |
+| 8 GB | Qwen3.5-9B-Q4_K_M | 54 846 | 27 423 |
+| 6 GB | Qwen3.5-9B-IQ3_XXS | 36 330 | 18 165 |
+| 5 GB | Qwen3.5-4B-Q5_K_M | 29 078 | 14 539 |
+| 4 GB | Qwen3.5-4B-IQ3_XXS | 48 050 | 24 025 |
 
-Without the floor, the same planner would have proposed `n_ctx = 2178` for
-the 4 GB card — a configuration that loads, answers chat requests, and
-cannot store a single memory.
+The hierarchy is monotonic: more VRAM yields a better model, not merely
+a larger context. `tests/test_planner.py::TestCardHierarchy` asserts it.
+
+> **Correction (2026-10-24).** The earlier version of this table was
+> computed with a scratch script and listed a different configuration per
+> card. Two things were wrong with it:
+>
+> 1. The `q8_0` KV factor was estimated at 1.125 bytes per value. The
+>    real value is 1.0625 (34 bytes per 32 values, read from
+>    `ggml/src/ggml-common.h`), so every context figure was ~5.9 % too
+>    small.
+> 2. The script did not consider that a model which does not fit on the
+>    card cannot be its choice at all. Without that rule the 4 GB card
+>    received the same small model as the 12 GB card.
+>
+> The table above is the first one produced by the shipped planner.
 
 ### 9.3 Two-model comparison
 
@@ -345,21 +400,27 @@ Same budget model, KV `q8_0`, 2 slots:
 The second process costs ~610 MiB (320 CUDA context + 290 compute buffer),
 which is more than the entire KV cache of the 9B at a usable context size.
 
-### 9.4 Minimum configuration breakdown (4 GB attempt)
+### 9.4 Minimum configuration breakdown (4 GB)
+
+The 4 GB card is viable with a 4B model at `IQ3_XXS`, because the
+weights are small enough to leave room for the KV cache:
 
 | Item | MiB |
 |---|---|
-| Qwen3-4B-Instruct Q4_K_M weights | 2120 |
-| KV cache, 12 288 tokens | 1570 |
-| Process overhead | 610 |
+| Qwen3.5-4B IQ3_XXS weights | 1654 |
+| KV cache, 12 288 tokens | 108 |
+| Process overhead | 990 |
 | Reserve (10 %) + headroom (6 %) | 654 |
-| **Total required** | **4954** |
+| **Total required** | **3406** |
 | **Available** | **4096** |
-| **Shortfall** | **858** |
+| **Shortfall** | **0** |
 
-With the embedder on CPU the shortfall drops to ~318 MiB, which makes the
-4 GB tier marginal rather than impossible for users willing to reduce the
-KV cache type to `q4_0`.
+With the GPU embedder removed (CPU embedder, 540 MiB saved) a 4B model
+at `Q4_K_M` also fits, at the cost of a smaller context.
+
+`IQ3_XXS` is a coarse quantisation. Whether it extracts facts well
+enough is an open measurement (§17.4) — the planner does not yet know,
+and it does not pretend to.
 
 ---
 
@@ -429,15 +490,20 @@ size × 0.89 (measured host fraction).
 | Qwen3.5-9B | 9086 | 7113 | 6273 | 5417 | 4929 | 3830 |
 | Qwen3-8B | 8306 | 6414 | 5580 | 4795 | 4369 | 3252 |
 | Llama-3.1-8B | – | 6290 | 5467 | 4693 | 4257 | 3168 |
-| gemma-4-E2B-it | 4815 | 4293 | 3201 | 2963 | 2846 | 2263 |
+| gemma-4-E2B-it | 4814 | 4293 | 3201 | 2963 | 2846 | 2263 |
 | Qwen3.5-4B | 4275 | 3363 | 2998 | 2614 | 2362 | 1859 |
 | Qwen3-4B-Instruct-2507 | 4082 | 3153 | 2756 | 2382 | 2166 | 1597 |
 
 **Resolution pitfall:** `unsloth/gemma-4-E2B-it-GGUF` contains
 `MTP/mtp-gemma-4-E2B-it-Q8_0.gguf` (93 MiB) — a speculative-decoding draft
 model. A naive "smallest file with this quantisation" search picks the
-draft instead of the main model (4815 MiB). Catalogue resolution must
+draft instead of the main model (4814 MiB). Catalogue resolution must
 exclude `MTP/` and `mmproj` paths.
+
+The catalogue in the repository carries these sizes as
+`size_bytes` per quantisation. `cpt-mem0 validate-catalogue` checks the
+catalogue's internal consistency; the sizes themselves are re-read from
+the API whenever the catalogue is refreshed.
 
 ---
 
