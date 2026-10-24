@@ -374,12 +374,52 @@ retrieval benchmark (documents in DE and EN, queries in DE/EN/FR):
 nomic wins on separation margin (2× the runner-up) and its 768 dimensions
 match the `llamacpp` backend, so both backends can share one store.
 
-### 5.4 Known quality note
+### 5.4 Task prefixes — measured, not implemented
 
-`nomic-embed-text` expects task prefixes (`search_query: ` /
-`search_document: `). Measured cosine between prefixed query and document
-is 0.9359 — omitting the prefix costs retrieval quality. Neither backend
-applies it today. Adding prefix support is a planned enhancement.
+`nomic-embed-text` documents task prefixes (`search_query: ` /
+`search_document: `). mem0 2.2.1 already threads the action through the
+embedder API:
+
+```python
+mem0/memory/main.py:927   query_embedding = self.embedding_model.embed(parsed_messages, "search")
+mem0/memory/main.py:1980  embeddings = self.embedding_model.embed(data, memory_action="add")
+mem0/memory/main.py:689   vec = self.embedding_model.embed(entity_text, "update")
+```
+
+So the mechanism to apply prefixes per action exists. The question is
+whether it helps.
+
+**Measured on a 30-document corpus with 46 queries in 5 languages**
+(English, German, French, Spanish, Italian), paired comparison with
+bootstrap confidence intervals:
+
+| Configuration | Top-1 | MRR | Margin |
+|---|---|---|---|
+| Without prefix | 31/46 | 0.7675 | 0.1008 |
+| Doc + query prefix | 33/46 | 0.7798 | 0.0844 |
+| Query prefix only | 29/46 | 0.7457 | 0.0937 |
+| Doc prefix only | 34/46 | 0.7934 | 0.0876 |
+
+Paired MRR differences (prefix − no prefix), 95 % bootstrap CI:
+
+| Configuration | Δ MRR | 95 % CI | Verdict |
+|---|---|---|---|
+| Doc + query | +0.0123 | [−0.0200, +0.0501] | no significant difference |
+| Query only | −0.0219 | [−0.0566, +0.0051] | no significant difference |
+| Doc only | +0.0259 | [−0.0090, +0.0682] | no significant difference |
+
+**Every confidence interval includes zero.** The effect is not
+distinguishable from noise on this corpus. A control case confirms the
+test has power: a deliberate mismatch (documents prefixed, queries not)
+still scores 34/46 — the prefix does not break retrieval either way.
+
+**Decision: no prefix support.** The measured benefit is not there, and
+adding it would create a store-compatibility hazard (a store written with
+prefixes is not readable by a build without them) in exchange for an
+unproven gain.
+
+The `memory_action` plumbing remains useful for other purposes — it is the
+hook a future reranker or a different embedder family would use.
 
 ---
 
@@ -742,25 +782,48 @@ TOTAL   9841 MiB model  +  1200 reserve  +  737 headroom  =  11778 / 12288
 
 ## 12. API surface
 
+Full contracts, error envelopes, exit codes and the MCP tool list are in
+**[docs/api.md](docs/api.md)**. Summary:
+
 REST on `127.0.0.1:8765`, plus an MCP server on the same port.
 
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/v1/memories` | add facts from a conversation turn |
-| `GET` | `/v1/memories` | list memories (`?user_id=`) |
 | `POST` | `/v1/memories/search` | semantic search |
+| `GET` | `/v1/memories` | list memories (`?user_id=`) |
 | `PATCH` | `/v1/memories/{id}` | update |
 | `DELETE` | `/v1/memories/{id}` | delete |
 | `GET` | `/v1/health` | liveness + GPU state |
 | `GET` | `/v1/status` | full runtime status |
+| `GET` | `/v1/plan` | the planner result for this hardware |
 | `GET` | `/v1/chat/completions` | OpenAI-compatible passthrough to the local LLM |
 
 Authentication: per-client API keys in `keys/clients.json`. The daemon
 generates one on first run. Keys are never written to logs.
 
-Multi-tenancy: `user_id` is a request parameter. A client may be scoped to a
-single `user_id`; the daemon enforces the scope. This is a mem0-native
+Multi-tenancy: `user_id` is a request parameter. A client may be scoped to
+a single `user_id`; the daemon enforces the scope. This is a mem0-native
 concept, not an agent-framework feature.
+
+### 12.1 MCP tools
+
+**Raw** — `memory_add`, `memory_search`, `memory_list`, `memory_update`,
+`memory_delete`.
+
+**Convenience** — `remember` (one statement → extracted fact) and `recall`
+(search → formatted bullet list ready to inject into a prompt).
+
+Both layers exist because they serve different callers: an agent that
+wants to paste context into a prompt uses `recall`; an application that
+needs structured data uses the raw tools.
+
+### 12.2 Compatibility surface
+
+The mem0 engine is wrapped, not exposed. The daemon translates to whatever
+mem0's API requires — including version differences such as
+`filters={"user_id": ...}` versus a top-level `user_id` parameter — so a
+mem0 upgrade cannot break a client's contract.
 
 ---
 
@@ -868,29 +931,44 @@ None of these are vendored into the source repository.
 
 ## 17. Open questions
 
-1. **Model catalogue scope.** Which models ship in the default catalogue?
-   Options: a curated set of 3–4 popular GGUF architectures, or fetch
-   metadata from Hugging Face on demand. Recommendation: curated set with
-   on-demand extension.
-2. **MCP tool surface.** Should the MCP server expose raw CRUD, or a
-   higher-level "remember this conversation / recall about X" interface?
-   Recommendation: raw CRUD plus two convenience tools.
-3. **Prompt-prefix support** for nomic embeddings (§5.4) — implement now or
-   defer? It measurably improves retrieval.
-4. **Multi-process store access.** Qdrant embedded forbids it (§3.1). If
-   demand appears for direct client access to the store, a Qdrant server
-   mode becomes necessary — at the cost of the zero-setup property.
-5. **The 4–5 GB tier.** The context floor (§9) makes 4 GB cards
-   non-viable with a GPU embedder. With the embedder on CPU the shortfall
-   is ~318 MiB, which a `q4_0` KV cache would close. Should the planner
-   allow a sub-floor configuration behind an explicit opt-in
-   (`planner.allow_degraded: true`) that warns that fact extraction may
-   fail, or should it refuse outright? Recommendation: refuse by default,
-   offer the opt-in with a clear warning — the user knows their card better
-   than the planner does.
-6. **Chat quality vs. extraction quality.** One model serves both roles
-   (§9.5). A Qwen3-4B extracts facts at ~94 % of a 9B's quality but is a
-   noticeably weaker chat model. Should the planner weight the two roles
-   differently when picking a model — for instance preferring a model that
-   is good at both over one that is excellent at one? Recommendation:
-   keep it simple, one ranking, and let the user override.
+### 17.1 Resolved
+
+| # | Question | Resolution |
+|---|---|---|
+| 1 | Model catalogue scope | **Curated list + on-demand extension.** The catalogue ships in `catalogue.json` (never fetched from the network — a tool that needs internet to start is not self-contained). `cpt-mem0 models add` resolves any GGUF from Hugging Face at runtime and stores it in a local overlay. See **[docs/catalogue.md](docs/catalogue.md)**. |
+| 2 | MCP tool surface | **Both.** Raw CRUD plus `remember` and `recall` as convenience tools. See §12.1 and `docs/api.md`. |
+| 3 | Nomic task prefixes | **No.** Measured over 46 queries in 5 languages: no significant difference, all 95 % CIs include zero. Adding them would create a store-compatibility hazard for an unproven gain. See §5.4. |
+| 4 | Multi-process store access | **Not needed.** Qdrant embedded forbids it (§3.1); the daemon owns the store and serves all clients. A Qdrant server mode remains an escape hatch, not a feature. |
+
+### 17.2 Still open
+
+**5. The 4–5 GB tier.** The context floor (§9) makes 4 GB cards
+non-viable with a GPU embedder. With the embedder on CPU the shortfall
+is ~318 MiB, which a `q4_0` KV cache would close. Should the planner
+allow a sub-floor configuration behind an explicit opt-in
+(`planner.allow_degraded: true`) that warns that fact extraction may
+fail, or should it refuse outright? Recommendation: refuse by default,
+offer the opt-in with a clear warning — the user knows their card better
+than the planner does.
+
+**6. Chat quality vs. extraction quality.** One model serves both roles
+(§9.5). A Qwen3-4B extracts facts at ~94 % of a 9B's quality but is a
+noticeably weaker chat model. Should the planner weight the two roles
+differently when picking a model — for instance preferring a model that
+is good at both over one that is excellent at one? Recommendation:
+keep it simple, one ranking (parameter count), and let the user override
+via `--model`.
+
+**7. Reranking.** The catalogue currently relies on the embedder's own
+similarity ranking. A cross-encoder reranker would improve Top-1 on
+larger corpora, at the cost of another model (~100–500 MiB VRAM or CPU
+time) and ~10–30 ms per query. Given that the VRAM budget is already
+tight, a CPU-based reranker might be the better trade — but only if
+measurements show a meaningful gain on a realistic corpus. Deferred
+until the service runs end to end.
+
+**8. Automatic model re-selection.** If the user later adds a larger
+model to the catalogue, should the daemon notice and offer an upgrade?
+Recommendation: no automatic switching — the active model is a running
+service, changing it under a live client would invalidate context
+caches. Offer it as `cpt-mem0 plan --upgrade` instead.

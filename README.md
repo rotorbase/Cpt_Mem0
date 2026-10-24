@@ -63,8 +63,34 @@ cpt-mem0 update     # update the llama.cpp build (never automatic)
 
 ## Status
 
-Specification phase. See [SPEC.md](SPEC.md) for the full design, the
-verification data behind every number in it, and the open questions.
+Specification phase. See [SPEC.md](SPEC.md) for the full design and the
+open questions.
+
+## Documents
+
+| Document | Content |
+|---|---|
+| [SPEC.md](SPEC.md) | Technical specification, 17 sections |
+| [docs/verification.md](docs/verification.md) | Every measurement behind the spec's numbers |
+| [docs/catalogue.md](docs/catalogue.md) | Model catalogue, file sizes, KV constants, resulting selections |
+| [docs/api.md](docs/api.md) | CLI, HTTP and MCP contracts |
+
+## Key findings
+
+- **The `--fit` trap.** `llama.cpp`'s `--fit` is on by default and silently
+  reduces context toward a 4096-token floor when a model does not fit.
+  The planner computes the configuration before launch and turns `--fit`
+  off.
+- **Hybrid architectures.** Qwen3.5 keeps a KV cache on only every fourth
+  layer (`full_attention_interval = 4`). The naive formula overestimates
+  the KV cache fourfold. Corrected, it matches the measurement exactly.
+- **A service that cannot remember.** mem0's extraction prompt needs
+  ~10 500 tokens in one slot. Below that, the service loads, answers chat,
+  and silently stores nothing. The planner enforces a context floor and
+  reports the shortfall rather than starting a broken service.
+- **One model, not two.** A second `llama-server` costs ~610 MiB of CUDA
+  context and compute buffer — more than the entire KV cache of the 9B at
+  a usable context size.
 
 ## License
 
@@ -72,5 +98,5 @@ MIT — see [LICENSE](LICENSE).
 
 Third-party components and their licenses (mem0, qdrant-client, llama.cpp,
 fastembed, model weights) are documented in
-[SPEC.md §15](SPEC.md#15-licensing-and-third-party-components). Model
+[SPEC.md §16](SPEC.md#16-licensing-and-third-party-components). Model
 weights are downloaded at runtime, never redistributed by the project.

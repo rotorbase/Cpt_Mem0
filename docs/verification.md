@@ -361,3 +361,82 @@ With the embedder on CPU the shortfall drops to ~318 MiB, which makes the
 4 GB tier marginal rather than impossible for users willing to reduce the
 KV cache type to `q4_0`.
 
+---
+
+## 10. Task prefixes (§5.4 of the specification)
+
+### 10.1 Test setup
+
+30 realistic memory facts, 46 queries across 5 languages (en, de, fr, es,
+it). Paired comparison: every query embedded with and without the prefix,
+the rank difference evaluated per query, bootstrap confidence interval
+over 10 000 resamples.
+
+### 10.2 Results
+
+| Configuration | Top-1 | MRR | Margin |
+|---|---|---|---|
+| Without prefix | 31/46 | 0.7675 | 0.1008 |
+| Doc + query prefix | 33/46 | 0.7798 | 0.0844 |
+| Query prefix only | 29/46 | 0.7457 | 0.0937 |
+| Doc prefix only | 34/46 | 0.7934 | 0.0876 |
+
+Paired Δ MRR (prefix − no prefix), 95 % CI:
+
+| Configuration | Δ MRR | 95 % CI | Affected queries |
+|---|---|---|---|
+| Doc + query | +0.0123 | [−0.0200, +0.0501] | 12/46 |
+| Query only | −0.0219 | [−0.0566, +0.0051] | 9/46 |
+| Doc only | +0.0259 | [−0.0090, +0.0682] | 12/46 |
+
+**All three confidence intervals include zero.** No configuration is
+distinguishable from no prefix.
+
+### 10.3 Control
+
+A deliberate mismatch — documents prefixed, queries not — scores 34/46,
+essentially the same as the consistent prefixed case (33/46) and slightly
+*better* than the unprefixed baseline (31/46). The prefix neither helps
+nor breaks retrieval, so the test is measuring a real (if absent) effect
+rather than a broken setup.
+
+### 10.4 Conclusion
+
+No prefix support is implemented. The measured benefit is absent, and
+prefix support would introduce a store-compatibility hazard: a store
+written by a prefixed build cannot be read by an unprefixed one.
+
+### 10.5 The mem0 hook
+
+mem0 2.2.1 already threads the action through the embedder API, so the
+mechanism exists if a future embedder family needs it:
+
+```
+mem0/memory/main.py:927   embed(parsed_messages, "search")
+mem0/memory/main.py:1980  embed(data, memory_action="add")
+mem0/memory/main.py:689   embed(entity_text, "update")
+```
+
+---
+
+## 11. Catalogue file sizes
+
+Read from the Hugging Face API (`?blobs=true`) on 2026-10-24. VRAM = file
+size × 0.89 (measured host fraction).
+
+| Model | Q8_0 | Q6_K | Q5_K_M | Q4_K_M | IQ4_XS | IQ3_XXS |
+|---|---|---|---|---|---|---|
+| Qwen3.5-9B | 9086 | 7113 | 6273 | 5417 | 4929 | 3830 |
+| Qwen3-8B | 8306 | 6414 | 5580 | 4795 | 4369 | 3252 |
+| Llama-3.1-8B | – | 6290 | 5467 | 4693 | 4257 | 3168 |
+| gemma-4-E2B-it | 4815 | 4293 | 3201 | 2963 | 2846 | 2263 |
+| Qwen3.5-4B | 4275 | 3363 | 2998 | 2614 | 2362 | 1859 |
+| Qwen3-4B-Instruct-2507 | 4082 | 3153 | 2756 | 2382 | 2166 | 1597 |
+
+**Resolution pitfall:** `unsloth/gemma-4-E2B-it-GGUF` contains
+`MTP/mtp-gemma-4-E2B-it-Q8_0.gguf` (93 MiB) — a speculative-decoding draft
+model. A naive "smallest file with this quantisation" search picks the
+draft instead of the main model (4815 MiB). Catalogue resolution must
+exclude `MTP/` and `mmproj` paths.
+
+
