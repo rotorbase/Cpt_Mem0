@@ -91,6 +91,20 @@ docs/
 - **A measurement that is not written down is lost.** The verification
   writes its server log to `results/server.log`, so a later run can be
   compared against an earlier one and a wrong figure can be traced.
+- **Count every buffer the framework allocates, not only the known
+  ones.** A hybrid architecture keeps a recurrent state next to the KV
+  cache — a fixed cost that does not scale with the context. The GGUF
+  header says which models have it (`<arch>.ssm.state_size`). A size
+  that cannot be derived is stored as a measured catalogue value; a
+  hybrid model without one is not plannable. See SPEC §4.11.
+- **A buffer that scales with the context needs a value per operating
+  point.** The compute buffer measured 116 MiB at 16 384 tokens and
+  392 MiB at 67 072. A constant from a small run is too small.
+- **Before a GPU run, compute the need and compare it with the free
+  VRAM.** Starting the 9B-Q8_0 on a card with 4927 MiB free took the
+  card to 275 MiB and pushed the user's own stack out of VRAM. The
+  need is the file size plus the KV plus the overhead — check it
+  first.
 - **The KV cache layout decides what `-c` means.** With
   `--kv-unified` it is the context per slot and the pool is shared;
   without it, it is the total and each slot gets its own pool. See
