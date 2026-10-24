@@ -81,12 +81,13 @@ Output (text mode):
 ```
 GPU     RTX 3060                          12288 MiB total
 LLM     Qwen3.5-9B Q8_0                   9086 MiB
-        weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
-        n_ctx 67072  (67072 per slot, 2 slots)
+        weights 8087 MiB  KV 910 MiB (17408 B/tok, q8_0)
+        n_ctx 54784  (54784 per slot, 2 slots)
         --fit off  --flash-attn on  --reasoning-format none  --kv-unified
+        recurrent state     100 MiB (hybrid model, fixed)
         ranking basis: unmeasured
 EMBED   llamacpp                          on GPU
-TOTAL   10350 MiB used  +  1200 reserve  +  737 headroom  =  12287 / 12288
+TOTAL   10349 MiB used  +  1200 reserve  +  737 headroom  =  12286 / 12288
 ```
 
 Output (JSON mode) — the machine-readable contract:
@@ -99,9 +100,9 @@ Output (JSON mode) — the machine-readable contract:
     "file": "Qwen3.5-9B-Q8_0.gguf", "size_mib": 9086,
     "weights_vram_mib": 8087, "kv_vram_mib": 1114,
     "kv_bytes_per_token": 17408, "cache_type": "q8_0",
-    "n_ctx": 67072, "n_ctx_slot": 67072, "parallel": 2,
+    "n_ctx": 54784, "n_ctx_slot": 54784, "parallel": 2,
     "rank_basis": "unmeasured",
-    "flags": ["-c", "67072", "--parallel", "2", "-ngl", "99",
+    "flags": ["-c", "54784", "--parallel", "2", "-ngl", "99",
               "--fit", "off", "--flash-attn", "on",
               "--reasoning-format", "none",
               "--no-context-shift", "--kv-unified",
@@ -122,7 +123,7 @@ When nothing fits, `viable` is `false` and `diagnostics` explains why:
   "diagnostics": {
     "reason": "context_floor_not_met",
     "required_mib": 3406, "available_mib": 4096, "shortfall_mib": 0,
-    "detail": {"model": "Qwen3.5-4B", "n_ctx": 47872, "n_ctx_slot": 47872,
+    "detail": {"model": "Qwen3-4B-Instruct-2507", "n_ctx": 13568, "n_ctx_slot": 13568,
                "required_total": 21000, "required_slot": 12288},
     "calibration_required": {},
     "options": [

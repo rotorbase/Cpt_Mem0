@@ -76,10 +76,35 @@ class ModelProfile:
     is_embedding_model: bool
     has_sliding_window: bool
     has_shared_kv_layers: bool
+    # SSM geometry. Hybrid models (Qwen3.5) mix attention layers with
+    # state-space layers. The state of the SSM layers lives in its own
+    # buffer, separate from the KV cache.
+    ssm_state_size: int | None
+    ssm_inner_size: int | None
+    ssm_group_count: int | None
+    ssm_conv_kernel: int | None
+    ssm_time_step_rank: int | None
 
     @property
     def file_size_mib(self) -> float:
         return self.file_size_bytes / (1024 * 1024)
+
+    @property
+    def is_hybrid(self) -> bool:
+        """Whether the model mixes attention with state-space layers.
+
+        A hybrid model keeps a recurrent state next to the KV cache.
+        That buffer has its own size, and it does not scale with the
+        context.
+        """
+        return self.ssm_state_size is not None
+
+    @property
+    def ssm_layers(self) -> int:
+        """The number of state-space layers."""
+        if not self.is_hybrid:
+            return 0
+        return self.layers - self.kv_layers
 
     @property
     def formula_reliable(self) -> bool:
@@ -237,6 +262,15 @@ def read_profile(path: str | Path) -> ModelProfile:
     quant = meta.get("general.file_type")
     quant_label = _quantisation_from_name(path.name)
 
+    # Hybrid architectures keep a recurrent state next to the KV cache.
+    # The keys are named after the architecture:
+    #   qwen35.ssm.state_size, qwen35.ssm.inner_size, ...
+    ssm_state_size = arch("ssm.state_size")
+    ssm_inner_size = arch("ssm.inner_size")
+    ssm_group_count = arch("ssm.group_count")
+    ssm_conv_kernel = arch("ssm.conv_kernel")
+    ssm_time_step_rank = arch("ssm.time_step_rank")
+
     return ModelProfile(
         path=path,
         architecture=architecture,
@@ -254,4 +288,10 @@ def read_profile(path: str | Path) -> ModelProfile:
         is_embedding_model=is_embedding,
         has_sliding_window=has_swa,
         has_shared_kv_layers=has_shared_kv,
+        ssm_state_size=None if ssm_state_size is None else int(ssm_state_size),
+        ssm_inner_size=None if ssm_inner_size is None else int(ssm_inner_size),
+        ssm_group_count=None if ssm_group_count is None else int(ssm_group_count),
+        ssm_conv_kernel=None if ssm_conv_kernel is None else int(ssm_conv_kernel),
+        ssm_time_step_rank=(None if ssm_time_step_rank is None
+                            else int(ssm_time_step_rank)),
     )

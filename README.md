@@ -22,12 +22,13 @@ $ cpt-mem0 plan
 
 GPU     RTX 3060                          12288 MiB total
 LLM     Qwen3.5-9B Q8_0                   9086 MiB
-        weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
-        n_ctx 67072  (67072 per slot, 2 slots)
+        weights 8087 MiB  KV 910 MiB (17408 B/tok, q8_0)
+        n_ctx 54784  (54784 per slot, 2 slots)
         --fit off  --flash-attn on  --reasoning-format none  --kv-unified
+        recurrent state     100 MiB (hybrid model, fixed)
         ranking basis: unmeasured
 EMBED   llamacpp                          on GPU
-TOTAL   10350 MiB used  +  1200 reserve  +  737 headroom  =  12287 / 12288
+TOTAL   10349 MiB used  +  1200 reserve  +  737 headroom  =  12286 / 12288
 ```
 
 `plan` starts nothing and touches nothing. It prints the configuration
@@ -116,9 +117,9 @@ See [SPEC.md](SPEC.md) for the full design and the open questions.
   ~10 500 tokens in one slot. Below that, the service loads, answers chat,
   and silently stores nothing. The planner enforces a context floor and
   reports the shortfall rather than starting a broken service.
-- **One model, not two.** A second `llama-server` costs ~610 MiB of CUDA
-  context and compute buffer — more than the entire KV cache of the 9B at
-  a usable context size.
+- **One model, not two.** A second `llama-server` costs ~812 MiB of CUDA
+  context, compute buffer and recurrent state — more than the entire KV
+  cache of the 9B at a usable context size.
 - **A larger card should get a better model.** Ranking the catalogue only
   by quality would hand a 4 GB card the same small model as a 12 GB card.
   The planner therefore ranks by what actually fits, and the card tiers

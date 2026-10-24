@@ -25,7 +25,7 @@ measured 11 % host fraction (§2 of `verification.md`).
        -> selected
 ```
 
-`OVERHEAD` = 610 MiB (process) + embedder cost (540 MiB GPU / 0 CPU) +
+`OVERHEAD` = 812 MiB (process) + embedder cost (540 MiB GPU / 0 CPU) +
 KV floor (1570 MiB).
 
 ### 1.1 Why the ranking is extraction capability, not parameter count
@@ -145,31 +145,31 @@ pessimistic.
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3.5-9B | Q8_0 | 67 072 | 67 072 | 8087 MiB |
+| 1 | Qwen3.5-9B | Q8_0 | 54 784 | 54 784 | 8087 MiB |
 
 ### 8 GB (8192 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3.5-9B | Q4_K_M | 54 784 | 54 784 | 4821 MiB |
+| 1 | Qwen3.5-9B | Q4_K_M | 42 496 | 42 496 | 4821 MiB |
 
 ### 6 GB (6144 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3.5-9B | IQ3_XXS | 36 096 | 36 096 | 3409 MiB |
+| 1 | Qwen3.5-9B | IQ3_XXS | 24 064 | 24 064 | 3409 MiB |
 
 ### 5 GB (5120 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3.5-4B | Q5_K_M | 28 928 | 28 928 | 2668 MiB |
+| 1 | Qwen3-4B-Instruct-2507 | Q4_K_M | 12 288 | 12 288 | 2668 MiB |
 
 ### 4 GB (4096 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3.5-4B | IQ3_XXS | 47 872 | 47 872 | 1654 MiB |
+| 1 | Qwen3-4B-Instruct-2507 | IQ3_XXS | 13 568 | 13 568 | 1654 MiB |
 
 ### 4.1 Largest reachable context
 

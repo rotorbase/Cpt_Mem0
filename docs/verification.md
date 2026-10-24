@@ -423,6 +423,53 @@ weights where the card held 8087 MiB.
 The two numbers add up exactly: 1030.62 + 8055.38 = 9086.00 MiB, the
 size of Qwen3.5-9B-Q8_0. The model was fully loaded all along.
 
+**The plan was 160 MiB too optimistic, and the reason was two missing
+terms.**
+
+The measured buffers of the 9B-Q8_0 run:
+
+```
+load_tensors:        CUDA0 model buffer size =  8045.05 MiB
+llama_kv_cache:      CUDA0 KV buffer size =  1113.50 MiB
+llama_memory_recurrent: CUDA0 RS buffer size =   100.50 MiB
+sched_reserve:      CUDA0 compute buffer size =   391.79 MiB
+```
+
+| Term | Planner | Measured | |
+|---|---|---|---|
+| Weights (CUDA0) | 8087 MiB | 8045.05 MiB | ✓ |
+| KV cache | 1114 MiB | 1113.50 MiB | ✓ exact |
+| Compute buffer | 290 MiB | 391.79 MiB | ✗ too small |
+| Recurrent state | — | 100.50 MiB | ✗ missing |
+| CUDA context | 320 MiB | — | |
+| Embedder | 540 MiB | — | |
+
+The recurrent state is the buffer of the state-space layers. Qwen3.5
+is a hybrid architecture: 32 layers, every fourth one carries a KV
+cache, the other 24 are state-space layers. Their state lives in its
+own buffer, which does not scale with the context and is not affected
+by the cache type.
+
+The GGUF header says which models have it - the keys are
+`<arch>.ssm.state_size`. Read over an HTTP range request, without
+downloading the model:
+
+| Model | Architecture | SSM keys | Recurrent state |
+|---|---|---|---|
+| Qwen3.5-9B | `qwen35` | yes | 100.50 MiB (measured) |
+| Qwen3.5-4B | `qwen35` | yes | not measured yet |
+| Qwen3-8B | `qwen3` | no | none |
+| Qwen3-4B-Instruct-2507 | `qwen3` | no | none |
+| Llama-3.1-8B-Instruct | `llama` | no | none |
+| gemma-4-E2B-it | `gemma4` | no | none |
+
+The size is **not derivable** from the attention geometry: none of the
+combinations of state size (128), inner size (4096), group count (16)
+and layer count reproduce the measured 100.50 MiB. It is therefore a
+measured catalogue value, and a hybrid model without one is not
+plannable - the planner asks for a calibration run instead of
+guessing.
+
 **One VRAM reading is a moment, not the allocation.**
 
 The measurement took a single `nvidia-smi` sample while the server was
@@ -498,11 +545,11 @@ quantisation, then best KV cache type. Embedder on GPU, 2 slots:
 
 | VRAM | Configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B-Q8_0 | 67 072 | 67 072 |
-| 8 GB | Qwen3.5-9B-Q4_K_M | 54 784 | 54 784 |
-| 6 GB | Qwen3.5-9B-IQ3_XXS | 36 096 | 36 096 |
-| 5 GB | Qwen3.5-4B-Q5_K_M | 28 928 | 28 928 |
-| 4 GB | Qwen3.5-4B-IQ3_XXS | 47 872 | 47 872 |
+| 12 GB | Qwen3.5-9B-Q8_0 | 54 784 | 54 784 |
+| 8 GB | Qwen3.5-9B-Q4_K_M | 42 496 | 42 496 |
+| 6 GB | Qwen3.5-9B-IQ3_XXS | 24 064 | 24 064 |
+| 5 GB | Qwen3-4B-Instruct-2507-Q4_K_M | 12 288 | 12 288 |
+| 4 GB | Qwen3-4B-Instruct-2507-IQ3_XXS | 13 568 | 13 568 |
 
 The hierarchy is monotonic: more VRAM yields a better model, not merely
 a larger context. `tests/test_planner.py::TestCardHierarchy` asserts it.
@@ -531,7 +578,8 @@ Same budget model, KV `q8_0`, 2 slots:
 | 8 GB | does not fit (10 011 MiB needed) | 51 798 (25 899/slot) |
 | 6 GB | does not fit (9 683 MiB needed) | does not fit |
 
-The second process costs ~610 MiB (320 CUDA context + 290 compute buffer),
+The second process costs ~812 MiB (320 CUDA context + 392 compute buffer
++ 100 recurrent state for a hybrid model),
 which is more than the entire KV cache of the 9B at a usable context size.
 
 ### 9.4 Minimum configuration breakdown (4 GB)

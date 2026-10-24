@@ -34,7 +34,22 @@ from typing import Iterable, Sequence
 # ---------------------------------------------------------------------------
 
 HOST_FRACTION = 0.11          # share of the model file that stays in host RAM
-COMPUTE_MIB = 290             # CUDA scratch buffer, 9B class
+#: The CUDA scratch buffer grows with the context: it holds the
+#: activations for the whole batch. Measured on an RTX 3060 with
+#: llama.cpp 0.7.0-dev (build 11798):
+#:
+#: ============================  ==================  ==========
+#: Model                        Context             Measured
+#: ============================  ==================  ==========
+#: Qwen3-4B-Instruct-Q4_K_M      16 384              116.09 MiB
+#: Qwen3.5-9B-Q8_0               67 072              391.79 MiB
+#: ============================  ==================  ==========
+#:
+#: The old value of 290 MiB was taken from an earlier run at a smaller
+#: context. At the context this planner now chooses, the 9B needs
+#: 392 MiB - the difference is what made the plan 160 MiB too
+#: optimistic on a 12 GB card.
+COMPUTE_MIB = 392             # CUDA scratch buffer, 9B class
 COMPUTE_MIB_SMALL = 130       # CUDA scratch buffer, small model
 CUDA_CTX_MIB = 320            # CUDA context, per llama-server process
 
@@ -138,6 +153,9 @@ class Candidate:
     cuda_context_mib: int
     total_vram_mib: float
     model_rank_basis: str = "unmeasured"
+    #: The recurrent state buffer of a hybrid model, in MiB. Zero for a
+    #: model without state-space layers.
+    recurrent_state_mib: float = 0.0
 
     @property
     def context_floor_satisfied(self) -> bool:
@@ -201,11 +219,14 @@ class Budget:
     reserve_mib: int
     headroom_mib: int
     kv_mib: float
+    #: The recurrent state buffer of a hybrid model. Fixed cost, does
+    #: not scale with the context.
+    recurrent_state_mib: float = 0.0
 
     @property
     def used_mib(self) -> float:
         return (self.weights_mib + self.compute_mib + self.cuda_context_mib
-                + self.embedder_mib + self.kv_mib)
+                + self.embedder_mib + self.kv_mib + self.recurrent_state_mib)
 
     @property
     def free_mib(self) -> float:
@@ -251,6 +272,7 @@ def _budget(
     reserve_mib: int,
     headroom_mib: int,
     kv_mib: float,
+    recurrent_state_mib: float = 0.0,
 ) -> Budget:
     return Budget(
         total_mib=total_mib,
@@ -261,6 +283,7 @@ def _budget(
         reserve_mib=reserve_mib,
         headroom_mib=headroom_mib,
         kv_mib=kv_mib,
+        recurrent_state_mib=recurrent_state_mib,
     )
 
 
@@ -277,11 +300,16 @@ def evaluate_candidate(
     embedder_backend: str = "llamacpp",
     parallel: int | None = None,
     model_rank_basis: str = "unmeasured",
+    recurrent_state_mib: float = 0.0,
 ) -> Candidate | None:
     """Compute one candidate, or ``None`` if it does not fit.
 
     Returns the candidate even when the context floor is violated; the
     caller decides whether that is fatal (it is, unless ``allow_degraded``).
+
+    ``recurrent_state_mib`` is the recurrent state buffer of a hybrid
+    model. It is a fixed cost that does not scale with the context, and
+    it is separate from the KV cache.
     """
     parallel = parallel or config.parallel
     reserve = config.reserve_for(hardware.total_vram_mib)
@@ -292,7 +320,8 @@ def evaluate_candidate(
     cuda_ctx = CUDA_CTX_MIB
     emb = embedder_cost_mib(embedder_backend)
 
-    fixed = weights + compute + cuda_ctx + emb + reserve + headroom
+    fixed = (weights + compute + cuda_ctx + emb + recurrent_state_mib
+             + reserve + headroom)
     remaining = hardware.total_vram_mib - fixed
     if remaining <= 0:
         return None
@@ -336,6 +365,7 @@ def evaluate_candidate(
         reserve_mib=reserve,
         headroom_mib=headroom,
         kv_mib=pool_tokens * mib_per_token,
+        recurrent_state_mib=recurrent_state_mib,
     )
     if budget.free_mib < 0:
         return None
@@ -357,6 +387,7 @@ def evaluate_candidate(
         cuda_context_mib=cuda_ctx,
         total_vram_mib=budget.used_mib,
         model_rank_basis=model_rank_basis,
+        recurrent_state_mib=recurrent_state_mib,
     )
 
 
@@ -509,6 +540,23 @@ def plan_for_hardware(
             model_id = entry.model_id
             rank_basis = getattr(entry, "rank_basis", "unmeasured")
             needs_calibration: list[str] = []
+
+            # A hybrid model keeps a recurrent state next to the KV
+            # cache. Its size is a fixed cost, and without it the budget
+            # is wrong by exactly that much.
+            #
+            # The size is not derivable from the attention geometry - the
+            # SSM state does not follow the same formula. So it comes
+            # from the catalogue, and a hybrid model whose size is not
+            # known is not plannable. Guessing would be the same
+            # mistake as guessing a KV constant.
+            recurrent_state = float(getattr(entry, "recurrent_state_mib", 0.0)
+                                   or 0.0)
+            if getattr(entry, "is_hybrid", False) and recurrent_state <= 0:
+                needs_calibration.append("recurrent_state")
+                calibration_required[model_id] = needs_calibration
+                continue
+
             for quant in _sorted_quantisations(entry):
                 if getattr(quant, "kv_bytes_per_token", None) is None:
                     # Architecture without a closed-form KV constant
@@ -529,6 +577,7 @@ def plan_for_hardware(
                         config=config,
                         embedder_backend=embedder,
                         model_rank_basis=rank_basis,
+                        recurrent_state_mib=recurrent_state,
                     )
                     if candidate is None:
                         continue
@@ -649,4 +698,5 @@ def _recompute_budget(candidate: Candidate, hardware: Hardware,
         reserve_mib=reserve,
         headroom_mib=headroom,
         kv_mib=candidate.kv_vram_mib,
+        recurrent_state_mib=candidate.recurrent_state_mib,
     )

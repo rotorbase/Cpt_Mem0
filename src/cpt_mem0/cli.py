@@ -54,6 +54,9 @@ def _format_plan(result: PlanResult, hardware: Hardware) -> str:
         # during argument parsing, before it loads anything.
         lines.append(f"        --fit off  --flash-attn on  "
                      f"--reasoning-format none  --kv-unified")
+        if c.recurrent_state_mib > 0:
+            lines.append(f"        recurrent state     {c.recurrent_state_mib:.0f} MiB "
+                         f"(hybrid model, fixed)")
         lines.append(f"        ranking basis: {c.model_rank_basis}")
         lines.append(f"EMBED   {c.embedder_backend}".ljust(42)
                      + f"{'0 MiB (in-process ONNX)' if c.embedder_backend == 'fastembed' else 'on GPU'}")

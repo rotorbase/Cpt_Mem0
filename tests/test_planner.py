@@ -557,6 +557,80 @@ class TestKvUnifiedSemantics:
         assert round_to_kv_block(0) == 0
 
 
+class TestRecurrentState:
+    """A hybrid model keeps a recurrent state next to the KV cache.
+
+    Qwen3.5 mixes attention layers with state-space layers. The state
+    of the SSM layers lives in its own buffer:
+
+        llama_memory_recurrent: CUDA0 RS buffer size = 100.50 MiB
+
+    It is a fixed cost that does not scale with the context, and it is
+    not part of the KV cache. A budget that leaves it out is wrong by
+    exactly that much - 160 MiB on a 12 GB card, which was the
+    difference between a plan that fits and one that does not.
+    """
+
+    def test_the_catalogue_carries_the_measured_size(self, catalogue):
+        entry = catalogue.by_id("Qwen3.5-9B")
+        assert entry.is_hybrid is True
+        assert entry.recurrent_state_mib == pytest.approx(100.50)
+        assert entry.recurrent_state_source == "measured"
+
+    def test_a_model_without_ssm_layers_has_no_state(self, catalogue):
+        entry = catalogue.by_id("Qwen3-8B")
+        assert entry.is_hybrid is False
+        assert entry.recurrent_state_mib == 0.0
+
+    def test_the_state_is_part_of_the_budget(self, catalogue):
+        """Without the state, the plan claims more VRAM than it has."""
+        hardware = Hardware(total_vram_mib=12288)
+        result = plan_for_hardware(hardware, catalogue.sorted_entries(),
+                                   PlannerConfig())
+        assert result.viable is True
+        assert result.candidate is not None
+        assert result.candidate.recurrent_state_mib == pytest.approx(100.50)
+        if result.budget is not None:
+            assert result.budget.recurrent_state_mib == pytest.approx(100.50)
+            assert result.budget.used_mib > result.candidate.weights_vram_mib
+
+    def test_a_hybrid_model_without_a_measured_size_is_not_plannable(self):
+        """Guessing the state size would be the same mistake as guessing
+        a KV constant. Such a model is reported as needing calibration.
+        """
+        hybrid = CatalogueEntry(
+            model_id="Hybrid-no-measurement",
+            repo="local",
+            params=4_000_000_000,
+            architecture="qwen35",
+            license="apache-2.0",
+            quantisations=[
+                Quantisation("Q4_K_M", "t.gguf", int(2741 * 1024 * 1024),
+                             147456, "measured"),
+            ],
+            rank_order=1,
+            geometry={"ssm.state_size": 128},
+            recurrent_state_mib=0.0,
+            recurrent_state_source="none",
+        )
+        result = plan_for_hardware(Hardware(total_vram_mib=12288), [hybrid],
+                                   PlannerConfig())
+        assert result.viable is False
+        assert result.candidate is None
+
+    def test_the_plan_does_not_exceed_the_card(self, catalogue):
+        """The measured reality has to fit: 12 448 MiB were measured on
+        a 12 288 MiB card before the state and the compute buffer were
+        counted."""
+        hardware = Hardware(total_vram_mib=12288)
+        result = plan_for_hardware(hardware, catalogue.sorted_entries(),
+                                   PlannerConfig())
+        assert result.viable is True
+        assert result.budget is not None
+        assert (result.budget.used_mib + result.budget.reserve_mib
+                + result.budget.headroom_mib) <= hardware.total_vram_mib
+
+
 class TestCacheTypeIsDegradedLast:
     """The cache type is degraded last, not first.
 

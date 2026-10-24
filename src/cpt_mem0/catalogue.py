@@ -77,6 +77,29 @@ class CatalogueEntry:
     #: GGUF geometry as read from the model header. Present so the
     #: catalogue can be checked against a real file without loading it.
     geometry: dict = field(default_factory=dict)
+    #: The recurrent state buffer of a hybrid model, in MiB. Zero for a
+    #: model without state-space layers.
+    #:
+    #: A hybrid model keeps the state of its SSM layers next to the KV
+    #: cache. That buffer has its own size and does not scale with the
+    #: context, so it has to be part of the budget.
+    #:
+    #: Measured on an RTX 3060 with llama.cpp 0.7.0-dev (build 11798):
+    #:   llama_memory_recurrent: CUDA0 RS buffer size = 100.50 MiB
+    recurrent_state_mib: float = 0.0
+    #: Where the recurrent state size came from: "measured" or
+    #: "formula". A model whose size is unknown is not plannable.
+    recurrent_state_source: str = "none"
+
+    @property
+    def is_hybrid(self) -> bool:
+        """Whether the model has state-space layers.
+
+        The GGUF header says so: a hybrid architecture carries
+        ``<arch>.ssm.state_size``.
+        """
+        return any(key.endswith("ssm.state_size")
+                   for key in self.geometry)
 
     @property
     def rank_basis(self) -> str:
@@ -221,6 +244,8 @@ def entry_from_dict(data: dict[str, Any]) -> CatalogueEntry:
         rank_order=int(data.get("rank_order", 0)),
         notes=str(data.get("notes", "")),
         geometry=dict(data.get("geometry", {})),
+        recurrent_state_mib=float(data.get("recurrent_state_mib", 0.0) or 0.0),
+        recurrent_state_source=str(data.get("recurrent_state_source", "none")),
     )
 
 

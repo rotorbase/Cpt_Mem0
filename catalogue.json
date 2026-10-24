@@ -60,9 +60,16 @@
         "full_attention_interval": 4,
         "n_kv_heads": 4,
         "key_length": 256,
-        "value_length": 256
+        "value_length": 256,
+        "ssm.conv_kernel": 4,
+        "ssm.group_count": 16,
+        "ssm.inner_size": 4096,
+        "ssm.state_size": 128,
+        "ssm.time_step_rank": 32
       },
-      "kv_bytes_per_token_f16": 32768
+      "kv_bytes_per_token_f16": 32768,
+      "recurrent_state_mib": 100.5,
+      "recurrent_state_source": "measured"
     },
     {
       "id": "Qwen3-8B",
@@ -300,7 +307,12 @@
         "full_attention_interval": 4,
         "n_kv_heads": 4,
         "key_length": 256,
-        "value_length": 256
+        "value_length": 256,
+        "ssm.conv_kernel": 4,
+        "ssm.group_count": 16,
+        "ssm.inner_size": 4096,
+        "ssm.state_size": 128,
+        "ssm.time_step_rank": 32
       },
       "kv_bytes_per_token_f16": 32768
     },

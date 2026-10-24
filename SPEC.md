@@ -303,22 +303,30 @@ costs more than it saves. Every additional `llama-server` process costs:
 | Overhead | MiB |
 |---|---|
 | CUDA context (per process) | ~320 |
-| Compute buffer (per process) | ~290 |
-| **Total per extra process** | **~610** |
+| Compute buffer (per process) | ~392 |
+| Recurrent state (hybrid model, per process) | ~100 |
+| **Total per extra process** | **~812** |
 
 Measured combination results (extraction model with a fixed 12 288-token
 slot, chat model at `Q4_K_M`, KV `q8_0`):
 
 | Card | 9B chat + 4B extraction | 9B chat alone |
 |---|---|---|
-| 12 GB | 74 638 (37 319/slot) | 263 802 (131 901/slot) |
-| 8 GB | does not fit | 54 784 (54 784/slot) |
-| 6 GB | does not fit | does not fit |
+| 12 GB | 58 112 (58 112/slot) | 54 784 (54 784/slot) |
+| 8 GB | does not fit | 42 496 (42 496/slot) |
+| 6 GB | does not fit | 24 064 (24 064/slot) |
 
-Splitting costs ~6 000 MiB of context on a 12 GB card and makes the 8 GB
-and 6 GB tiers impossible. Since a 4B extraction model is documented to be
-within ~6 % of a 9B for fact extraction, the single-model design wins on
-every axis that matters.
+Splitting makes the 8 GB and 6 GB tiers impossible: a second
+llama-server needs its own context, its own compute buffer and - for a
+hybrid model - its own recurrent state, so the card has to hold two
+models at once. On a 12 GB card the split still fits and even leaves
+slightly more context for the chat model, because the extraction model
+is small and needs only its 12 288-token slot.
+
+Since a 4B extraction model is documented to be within ~6 % of a 9B for
+fact extraction, the split brings no quality gain. The single-model
+design wins on every axis that matters, and it is the only one that
+works below 12 GB.
 
 **Decision: one LLM serves both roles.** The planner may still *consider*
 a split (it fits on a 24 GB+ card for a user who wants a large chat model
@@ -332,11 +340,11 @@ enforced). Regenerate with `scripts/regenerate_tiers.py`:
 
 | VRAM | Selected configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B Q8_0 | 67 072 | 67 072 |
-| 8 GB | Qwen3.5-9B Q4_K_M | 54 784 | 54 784 |
-| 6 GB | Qwen3.5-9B IQ3_XXS | 36 096 | 36 096 |
-| 5 GB | Qwen3.5-4B Q5_K_M | 28 928 | 28 928 |
-| 4 GB | Qwen3.5-4B IQ3_XXS | 47 872 | 47 872 |
+| 12 GB | Qwen3.5-9B Q8_0 | 54 784 | 54 784 |
+| 8 GB | Qwen3.5-9B Q4_K_M | 42 496 | 42 496 |
+| 6 GB | Qwen3.5-9B IQ3_XXS | 24 064 | 24 064 |
+| 5 GB | Qwen3-4B-Instruct-2507 Q4_K_M | 12 288 | 12 288 |
+| 4 GB | Qwen3-4B-Instruct-2507 IQ3_XXS | 13 568 | 13 568 |
 
 The tiers are monotonic: more VRAM yields a better model, not merely a
 larger context. A card that cannot hold a model's weights never receives
@@ -385,8 +393,64 @@ prediction was correct to within 4 MiB (9 775 MiB measured against
 9 811 MiB predicted), so the budget model was sound — only the meaning
 of `-c` was not.
 
-### 4.11 The cascade order
+### 4.11 The recurrent state of a hybrid model
 
+A hybrid architecture mixes attention layers with state-space layers.
+Qwen3.5 does: 32 layers, every fourth one carries a KV cache, the
+other 24 are state-space layers. Their state lives in its own buffer:
+
+```
+llama_memory_recurrent:      CUDA0 RS buffer size =   100.50 MiB
+```
+
+That buffer is **not** part of the KV cache. It does not scale with the
+context, and it is not affected by the cache type. It is a fixed cost
+that a budget without it understates by exactly that much.
+
+The GGUF header says which models have this buffer. The keys are
+`<arch>.ssm.state_size`, and a model without them has no recurrent
+state:
+
+| Model | Architecture | SSM keys | Recurrent state |
+|---|---|---|---|
+| Qwen3.5-9B | `qwen35` | yes | 100.50 MiB (measured) |
+| Qwen3.5-4B | `qwen35` | yes | not measured yet |
+| Qwen3-8B | `qwen3` | no | none |
+| Qwen3-4B-Instruct-2507 | `qwen3` | no | none |
+| Llama-3.1-8B-Instruct | `llama` | no | none |
+| gemma-4-E2B-it | `gemma4` | no | none |
+
+**The size is not derivable.** The attention geometry does not produce
+it: the state of a state-space layer does not follow the same formula
+as a KV tensor, and none of the combinations of state size, inner size
+and group count reproduce the measured 100.50 MiB. So it is stored in
+the catalogue as a measured value, and a hybrid model whose size is
+unknown is **not plannable** — the planner reports that it needs a
+calibration run rather than guessing.
+
+The same rule that applies to the KV constants applies here: a number
+that was not measured is not used.
+
+**Why it matters.** With the state and the compute buffer counted, the
+12 GB tier changed from 67 072 tokens to 54 784. The earlier plan
+claimed 12 287 of 12 288 MiB; the measured reality needed 12 448. The
+difference was exactly the two terms that were missing.
+
+### 4.12 The compute buffer grows with the context
+
+The CUDA scratch buffer holds the activations of the batch, so it
+grows with the context:
+
+| Model | Context | Measured |
+|---|---|---|
+| Qwen3-4B-Instruct-Q4_K_M | 16 384 | 116.09 MiB |
+| Qwen3.5-9B-Q8_0 | 67 072 | 391.79 MiB |
+
+The planner used a constant of 290 MiB, taken from an earlier run at a
+smaller context. At the context the planner now chooses, the 9B needs
+392 MiB.
+
+### 4.13 The cascade order
 The cache type is degraded **last**, not first. The cascade tries every
 model at `q8_0`, then every model at `f16`, then every model at `q4_0`.
 
@@ -690,11 +754,11 @@ With the floors enforced, the viable card tiers are:
 
 | Card | Viable | Notes |
 |---|---|---|
-| 12 GB | ✅ Qwen3.5-9B Q8_0, n_ctx 67 072 | comfortable |
-| 8 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 54 784 | |
-| 6 GB | ✅ Qwen3.5-9B IQ3_XXS, n_ctx 36 096 | coarse quantisation |
-| 5 GB | ✅ Qwen3.5-4B Q5_K_M, n_ctx 28 928 | |
-| 4 GB | ✅ Qwen3.5-4B IQ3_XXS, n_ctx 47 872 | fits, but at `IQ3_XXS` |
+| 12 GB | ✅ Qwen3.5-9B Q8_0, n_ctx 54 784 | comfortable |
+| 8 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 42 496 | |
+| 6 GB | ✅ Qwen3.5-9B IQ3_XXS, n_ctx 24 064 | coarse quantisation |
+| 5 GB | ✅ Qwen3-4B-Instruct-2507 Q4_K_M, n_ctx 12 288 | |
+| 4 GB | ✅ Qwen3-4B-Instruct-2507 IQ3_XXS, n_ctx 13 568 | fits, but at `IQ3_XXS` |
 
 At 4 GB the smallest configuration that reaches the context floor needs:
 
@@ -723,20 +787,22 @@ was evaluated and rejected on measurement.
 | Overhead | MiB | Source |
 |---|---|---|
 | CUDA context | ~320 | measured (188 MiB observed delta + process baseline) |
-| Compute buffer | ~290 | server log |
-| **Total** | **~610** | |
+| Compute buffer | ~392 | server log |
+| Recurrent state (hybrid) | ~100 | server log |
+| **Total** | **~812** | |
 
 **Resulting configurations (KV `q8_0`, 2 slots):**
 
 | Card | 9B chat + 4B extraction | 9B chat alone |
 |---|---|---|
-| 12 GB | 74 638 (37 319/slot) | **263 802 (131 901/slot)** |
-| 8 GB | does not fit | **54 784 (54 784/slot)** |
-| 6 GB | does not fit | does not fit (9B) |
+| 12 GB | 58 112 (58 112/slot) | **54 784 (54 784/slot)** |
+| 8 GB | does not fit | **42 496 (42 496/slot)** |
+| 6 GB | does not fit | **24 064 (24 064/slot)** |
 | 5 GB | does not fit | does not fit |
+| 4 GB | does not fit | does not fit |
 
-Splitting costs ~6 000 MiB of context on a 12 GB card and eliminates the
-8 GB and 6 GB tiers entirely. The quality argument for splitting is weak:
+Splitting eliminates the 8 GB and 6 GB tiers entirely: a second
+llama-server has to fit on the card as well. The quality argument for splitting is weak:
 a 4B extraction model is documented to be within ~6 % of a 9B for fact
 extraction, and the mem0-ollama-hybrid project rates the 3–4B range as the
 sweet spot.
@@ -853,7 +919,7 @@ cpt-mem0 migrate --from pgvector
 GPU     RTX 3060                          12288 MiB total
 LLM     Qwen3.5-9B Q8_0                   9086 MiB
         weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
-        n_ctx 67072  (67072 per slot, 2 slots)
+        n_ctx 54784  (54784 per slot, 2 slots)
         --fit off  --flash-attn on  --reasoning off
         ranking basis: unmeasured
 EMBED   llamacpp                          on GPU
@@ -1131,7 +1197,7 @@ Three findings:
   measured one is evidence.
 
 This also resolves the apparent tension in §9.5: the split model idea was
-rejected because a second process costs ~610 MiB. With gemma-4-E2B at
+rejected because a second process costs ~812 MiB. With gemma-4-E2B at
 2637 MiB of weights, a dedicated extractor on top of a 9B chat model fits
 on a 24 GB card for ~9300 MiB — but the measurement gives no reason to do
 it, since the 2B alone already extracts best.
