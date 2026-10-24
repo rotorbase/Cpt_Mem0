@@ -14,6 +14,9 @@ from cpt_mem0.planner import (  # noqa: E402
     CONTEXT_FLOOR_SLOT,
     CONTEXT_FLOOR_TOTAL,
     CUDA_CTX_MIB,
+    EMBEDDER_COMPUTE_MIB,
+    EMBEDDER_KV_MIB,
+    EMBEDDER_WEIGHTS_MIB,
     HOST_FRACTION,
     KV_BLOCK_TOKENS,
     Hardware,
@@ -102,8 +105,23 @@ class TestKvCacheScaling:
 
 class TestEmbedderCost:
     def test_llamacpp_embedder_needs_a_second_cuda_context(self):
+        """The embedder is a second llama-server process: weights, KV,
+        compute buffer and its own CUDA context.
+
+        The numbers are measured. The compute buffer is 25 MiB, not the
+        130 MiB an earlier measurement suggested - the weights are
+        66.92 MiB on the card and 12.58 MiB in host RAM.
+        """
         # weights + KV + compute + its own CUDA context
-        assert embedder_cost_mib("llamacpp") == 78 + 12 + 130 + CUDA_CTX_MIB
+        assert embedder_cost_mib("llamacpp") == (
+            EMBEDDER_WEIGHTS_MIB + EMBEDDER_KV_MIB
+            + EMBEDDER_COMPUTE_MIB + CUDA_CTX_MIB)
+
+    def test_the_embedder_costs_less_than_measured(self):
+        """The plan must not claim more than the card really needs.
+        Measured: 66.92 weights + 24.52 compute + 12 KV + 320 context
+        = 423 MiB. The plan says 424."""
+        assert embedder_cost_mib("llamacpp") <= 424
 
     def test_fastembed_needs_no_vram(self):
         assert embedder_cost_mib("fastembed") == 0

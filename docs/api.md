@@ -81,13 +81,13 @@ Output (text mode):
 ```
 GPU     RTX 3060                          12288 MiB total
 LLM     Qwen3.5-9B Q8_0                   9086 MiB
-        weights 8087 MiB  KV 910 MiB (17408 B/tok, q8_0)
-        n_ctx 54784  (54784 per slot, 2 slots)
+        weights 8087 MiB  KV 1024 MiB (17408 B/tok, q8_0)
+        n_ctx 61696  (61696 per slot, 2 slots)
         --fit off  --flash-attn on  --reasoning-format none  --kv-unified
         recurrent state     100 MiB (hybrid model, fixed)
         ranking basis: unmeasured
 EMBED   llamacpp                          on GPU
-TOTAL   10349 MiB used  +  1200 reserve  +  737 headroom  =  12286 / 12288
+TOTAL   10347 MiB used  +  1200 reserve  +  737 headroom  =  12284 / 12288
 ```
 
 Output (JSON mode) — the machine-readable contract:
@@ -100,17 +100,17 @@ Output (JSON mode) — the machine-readable contract:
     "file": "Qwen3.5-9B-Q8_0.gguf", "size_mib": 9086,
     "weights_vram_mib": 8087, "kv_vram_mib": 1114,
     "kv_bytes_per_token": 17408, "cache_type": "q8_0",
-    "n_ctx": 54784, "n_ctx_slot": 54784, "parallel": 2,
+    "n_ctx": 61696, "n_ctx_slot": 61696, "parallel": 2,
     "rank_basis": "unmeasured",
-    "flags": ["-c", "54784", "--parallel", "2", "-ngl", "99",
+    "flags": ["-c", "61696", "--parallel", "2", "-ngl", "99",
               "--fit", "off", "--flash-attn", "on",
               "--reasoning-format", "none",
               "--no-context-shift", "--kv-unified",
               "--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]
   },
   "embedder": {"backend": "llamacpp"},
-  "budget": {"total_mib": 12288, "used_mib": 10350, "reserved_mib": 1200,
-             "headroom_mib": 737, "free_mib": 1938},
+  "budget": {"total_mib": 12288, "used_mib": 10347, "reserved_mib": 1200,
+             "headroom_mib": 737, "free_mib": 1941},
   "viable": true
 }
 ```
@@ -123,7 +123,7 @@ When nothing fits, `viable` is `false` and `diagnostics` explains why:
   "diagnostics": {
     "reason": "context_floor_not_met",
     "required_mib": 3406, "available_mib": 4096, "shortfall_mib": 0,
-    "detail": {"model": "Qwen3-4B-Instruct-2507", "n_ctx": 13568, "n_ctx_slot": 13568,
+    "detail": {"model": "Qwen3-4B-Instruct-2507", "n_ctx": 15104, "n_ctx_slot": 15104,
                "required_total": 21000, "required_slot": 12288},
     "calibration_required": {},
     "options": [

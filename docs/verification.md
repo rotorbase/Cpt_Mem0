@@ -545,11 +545,11 @@ quantisation, then best KV cache type. Embedder on GPU, 2 slots:
 
 | VRAM | Configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B-Q8_0 | 54 784 | 54 784 |
-| 8 GB | Qwen3.5-9B-Q4_K_M | 42 496 | 42 496 |
-| 6 GB | Qwen3.5-9B-IQ3_XXS | 24 064 | 24 064 |
-| 5 GB | Qwen3-4B-Instruct-2507-Q4_K_M | 12 288 | 12 288 |
-| 4 GB | Qwen3-4B-Instruct-2507-IQ3_XXS | 13 568 | 13 568 |
+| 12 GB | Qwen3.5-9B-Q8_0 | 61 696 | 61 696 |
+| 8 GB | Qwen3.5-9B-Q4_K_M | 49 408 | 49 408 |
+| 6 GB | Qwen3.5-9B-IQ3_XXS | 30 976 | 30 976 |
+| 5 GB | Qwen3-4B-Instruct-2507-Q4_K_M | 13 824 | 13 824 |
+| 4 GB | Qwen3-4B-Instruct-2507-IQ3_XXS | 15 104 | 15 104 |
 
 The hierarchy is monotonic: more VRAM yields a better model, not merely
 a larger context. `tests/test_planner.py::TestCardHierarchy` asserts it.

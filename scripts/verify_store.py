@@ -70,13 +70,82 @@ def find_llama_server() -> str | None:
     return None
 
 
+def process_vram_mib(pid: int) -> int | None:
+    """The VRAM of one process, in MiB.
+
+    Reading it per process is what makes the measurement independent of
+    what else runs on the card.
+    """
+    import shutil
+    exe = shutil.which("nvidia-smi")
+    if exe is None:
+        return None
+    proc = subprocess.run(
+        [exe, "--query-compute-apps=pid,used_memory",
+         "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, timeout=15)
+    if proc.returncode != 0:
+        return None
+    for line in proc.stdout.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 2:
+            continue
+        try:
+            if int(parts[0]) == pid:
+                return int(float(parts[1]))
+        except ValueError:
+            continue
+    return None
+
+
+def gpu_utilisation_during(port: int, text: str, samples: int = 10
+                           ) -> int | None:
+    """The highest GPU utilisation seen while an embedding runs.
+
+    A model on the CPU leaves the card idle. A model on the GPU drives
+    the utilisation up. This is the difference between the two that a
+    VRAM reading alone cannot show: a server can hold VRAM without
+    using it.
+    """
+    import shutil
+    exe = shutil.which("nvidia-smi")
+    if exe is None:
+        return None
+
+    readings: list[int] = []
+
+    def poll() -> None:
+        for _ in range(samples):
+            result = subprocess.run(
+                [exe, "--query-gpu=utilization.gpu",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=10)
+            try:
+                readings.append(int(float(result.stdout.strip())))
+            except ValueError:
+                pass
+            time.sleep(0.1)
+
+    thread = threading.Thread(target=poll, daemon=True)
+    thread.start()
+    # A batch, so the request lasts long enough to be sampled.
+    embed_one(port, [text] * 32)
+    thread.join(timeout=5)
+    return max(readings) if readings else None
+
+
 def embed(exe: str, model: Path, port: int, texts: list[str],
-          timeout: int = 180) -> list[list[float]]:
+          timeout: int = 180, log_path: Path | None = None) -> list[list[float]]:
     """Start the embedding server, embed the texts, stop the server.
 
     The server is started here rather than kept running, because the
     second phase needs a fresh process: that is what proves the store
     survives.
+
+    The server log is written when a path is given, and the VRAM of the
+    server process is measured while it runs. The log says how many
+    layers went to the GPU; the VRAM says whether the card was used at
+    all. Neither is a substitute for the other.
     """
     flags = [
         "--parallel", "1", "-c", "2048", "-ngl", "99",
@@ -128,6 +197,24 @@ def embed(exe: str, model: Path, port: int, texts: list[str],
             vectors.append(vector)
             print(f"  embedded {len(vector)} dimensions: "
                   f"{text[:48]!r}", flush=True)
+
+        # The evidence that the card was used: the VRAM of this process
+        # and the GPU utilisation while the embedding ran.
+        vram = process_vram_mib(proc.pid)
+        print(f"  server VRAM: {vram} MiB (nvidia-smi, per process)",
+              flush=True)
+        util = gpu_utilisation_during(port, texts[0])
+        print(f"  GPU utilisation while embedding: {util} %", flush=True)
+
+        if log_path is not None:
+            try:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                log_path.write_text("".join(log), encoding="utf-8")
+                print(f"  server log: {log_path}", flush=True)
+            except OSError as exc:
+                print(f"  could not write the server log: {exc}",
+                      flush=True)
+
         return vectors
     finally:
         if proc.poll() is None:
@@ -138,9 +225,14 @@ def embed(exe: str, model: Path, port: int, texts: list[str],
                 proc.kill()
 
 
-def embed_one(port: int, text: str, timeout: float = 60.0
+def embed_one(port: int, text: str | list[str], timeout: float = 60.0
               ) -> list[float] | None:
-    """One embedding request against a running server."""
+    """One embedding request against a running server.
+
+    A list of texts is sent as a batch. The first vector is returned;
+    the batch is only used to make a request last long enough to be
+    sampled.
+    """
     payload = json.dumps({"input": text, "model": "nomic-embed"}).encode(
         "utf-8")
     request = urllib.request.Request(
@@ -199,7 +291,8 @@ def main() -> int:
 
     # ---- phase 1: embed and store -------------------------------------
     print("\n--- phase 1: embed and store ---", flush=True)
-    vectors = embed(exe, model, args.port, FACTS, timeout=args.timeout)
+    vectors = embed(exe, model, args.port, FACTS, timeout=args.timeout,
+                    log_path=store_path.parent / "embedder-phase1.log")
     if not vectors:
         print("\nphase 1 failed: no vectors", file=sys.stderr)
         return 1
@@ -240,7 +333,8 @@ def main() -> int:
     queries = [query for query, _ in QUERIES]
     expected = [expected for _, expected in QUERIES]
     query_vectors = embed(exe, model, args.port, queries,
-                           timeout=args.timeout)
+                           timeout=args.timeout,
+                           log_path=store_path.parent / "embedder-phase2.log")
     if not query_vectors:
         print("\nphase 2 failed: no query vectors", file=sys.stderr)
         return 1

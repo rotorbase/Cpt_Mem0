@@ -312,9 +312,9 @@ slot, chat model at `Q4_K_M`, KV `q8_0`):
 
 | Card | 9B chat + 4B extraction | 9B chat alone |
 |---|---|---|
-| 12 GB | 58 112 (58 112/slot) | 54 784 (54 784/slot) |
-| 8 GB | does not fit | 42 496 (42 496/slot) |
-| 6 GB | does not fit | 24 064 (24 064/slot) |
+| 12 GB | 58 112 (58 112/slot) | 61 696 (61 696/slot) |
+| 8 GB | does not fit | 49 408 (49 408/slot) |
+| 6 GB | does not fit | 30 976 (30 976/slot) |
 
 Splitting makes the 8 GB and 6 GB tiers impossible: a second
 llama-server needs its own context, its own compute buffer and - for a
@@ -340,11 +340,11 @@ enforced). Regenerate with `scripts/regenerate_tiers.py`:
 
 | VRAM | Selected configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B Q8_0 | 54 784 | 54 784 |
-| 8 GB | Qwen3.5-9B Q4_K_M | 42 496 | 42 496 |
-| 6 GB | Qwen3.5-9B IQ3_XXS | 24 064 | 24 064 |
-| 5 GB | Qwen3-4B-Instruct-2507 Q4_K_M | 12 288 | 12 288 |
-| 4 GB | Qwen3-4B-Instruct-2507 IQ3_XXS | 13 568 | 13 568 |
+| 12 GB | Qwen3.5-9B Q8_0 | 61 696 | 61 696 |
+| 8 GB | Qwen3.5-9B Q4_K_M | 49 408 | 49 408 |
+| 6 GB | Qwen3.5-9B IQ3_XXS | 30 976 | 30 976 |
+| 5 GB | Qwen3-4B-Instruct-2507 Q4_K_M | 13 824 | 13 824 |
+| 4 GB | Qwen3-4B-Instruct-2507 IQ3_XXS | 15 104 | 15 104 |
 
 The tiers are monotonic: more VRAM yields a better model, not merely a
 larger context. A card that cannot hold a model's weights never receives
@@ -432,7 +432,7 @@ The same rule that applies to the KV constants applies here: a number
 that was not measured is not used.
 
 **Why it matters.** With the state and the compute buffer counted, the
-12 GB tier changed from 67 072 tokens to 54 784. The earlier plan
+12 GB tier changed from 67 072 tokens to 61 696. The earlier plan
 claimed 12 287 of 12 288 MiB; the measured reality needed 12 448. The
 difference was exactly the two terms that were missing.
 
@@ -754,11 +754,11 @@ With the floors enforced, the viable card tiers are:
 
 | Card | Viable | Notes |
 |---|---|---|
-| 12 GB | ✅ Qwen3.5-9B Q8_0, n_ctx 54 784 | comfortable |
-| 8 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 42 496 | |
-| 6 GB | ✅ Qwen3.5-9B IQ3_XXS, n_ctx 24 064 | coarse quantisation |
-| 5 GB | ✅ Qwen3-4B-Instruct-2507 Q4_K_M, n_ctx 12 288 | |
-| 4 GB | ✅ Qwen3-4B-Instruct-2507 IQ3_XXS, n_ctx 13 568 | fits, but at `IQ3_XXS` |
+| 12 GB | ✅ Qwen3.5-9B Q8_0, n_ctx 61 696 | comfortable |
+| 8 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 49 408 | |
+| 6 GB | ✅ Qwen3.5-9B IQ3_XXS, n_ctx 30 976 | coarse quantisation |
+| 5 GB | ✅ Qwen3-4B-Instruct-2507 Q4_K_M, n_ctx 13 824 | |
+| 4 GB | ✅ Qwen3-4B-Instruct-2507 IQ3_XXS, n_ctx 15 104 | fits, but at `IQ3_XXS` |
 
 At 4 GB the smallest configuration that reaches the context floor needs:
 
@@ -795,9 +795,9 @@ was evaluated and rejected on measurement.
 
 | Card | 9B chat + 4B extraction | 9B chat alone |
 |---|---|---|
-| 12 GB | 58 112 (58 112/slot) | **54 784 (54 784/slot)** |
-| 8 GB | does not fit | **42 496 (42 496/slot)** |
-| 6 GB | does not fit | **24 064 (24 064/slot)** |
+| 12 GB | 58 112 (58 112/slot) | **61 696 (61 696/slot)** |
+| 8 GB | does not fit | **49 408 (49 408/slot)** |
+| 6 GB | does not fit | **30 976 (30 976/slot)** |
 | 5 GB | does not fit | does not fit |
 | 4 GB | does not fit | does not fit |
 
@@ -919,8 +919,9 @@ cpt-mem0 migrate --from pgvector
 GPU     RTX 3060                          12288 MiB total
 LLM     Qwen3.5-9B Q8_0                   9086 MiB
         weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
-        n_ctx 54784  (54784 per slot, 2 slots)
-        --fit off  --flash-attn on  --reasoning off
+        n_ctx 61696  (61696 per slot, 2 slots)
+        --fit off  --flash-attn on  --reasoning-format none  --kv-unified
+        recurrent state     100 MiB (hybrid model, fixed)
         ranking basis: unmeasured
 EMBED   llamacpp                          on GPU
 TOTAL   10351 MiB used  +  1200 reserve  +  737 headroom  =  12288 / 12288

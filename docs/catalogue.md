@@ -145,31 +145,31 @@ pessimistic.
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3.5-9B | Q8_0 | 54 784 | 54 784 | 8087 MiB |
+| 1 | Qwen3.5-9B | Q8_0 | 61 696 | 61 696 | 8087 MiB |
 
 ### 8 GB (8192 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3.5-9B | Q4_K_M | 42 496 | 42 496 | 4821 MiB |
+| 1 | Qwen3.5-9B | Q4_K_M | 49 408 | 49 408 | 4821 MiB |
 
 ### 6 GB (6144 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3.5-9B | IQ3_XXS | 24 064 | 24 064 | 3409 MiB |
+| 1 | Qwen3.5-9B | IQ3_XXS | 30 976 | 30 976 | 3409 MiB |
 
 ### 5 GB (5120 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3-4B-Instruct-2507 | Q4_K_M | 12 288 | 12 288 | 2668 MiB |
+| 1 | Qwen3-4B-Instruct-2507 | Q4_K_M | 13 824 | 13 824 | 2668 MiB |
 
 ### 4 GB (4096 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3-4B-Instruct-2507 | IQ3_XXS | 13 568 | 13 568 | 1654 MiB |
+| 1 | Qwen3-4B-Instruct-2507 | IQ3_XXS | 15 104 | 15 104 | 1654 MiB |
 
 ### 4.1 Largest reachable context
 

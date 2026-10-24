@@ -115,6 +115,22 @@ def gpu_used_mib() -> int | None:
         return None
 
 
+def gpu_free_mib() -> int | None:
+    """The VRAM still free on the card."""
+    exe = shutil_which("nvidia-smi")
+    if exe is None:
+        return None
+    proc = subprocess.run(
+        [exe, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, timeout=15)
+    if proc.returncode != 0:
+        return None
+    try:
+        return int(float(proc.stdout.strip().splitlines()[0]))
+    except (ValueError, IndexError):
+        return None
+
+
 def process_vram_mib(pid: int) -> int | None:
     """The VRAM of one process, in MiB.
 
@@ -365,6 +381,9 @@ def main() -> int:
         timeout=args.timeout, on_ready=_embedder_ready)
 
     # ---- the LLM ------------------------------------------------------
+    # The embedder stays resident. The point of this run is that both
+    # models fit on the card at the same time, which is what the app
+    # needs.
     print("\n--- LLM ---", flush=True)
     llm_flags = candidate.as_flags() + [VERBOSE_FLAG]
 
@@ -377,6 +396,11 @@ def main() -> int:
         measured["llm_detail"] = detail
         print(f"  inference: {'OK' if ok else 'FAILED'} - {detail}",
               flush=True)
+        # The card as a whole, with both models on it.
+        measured["card_used"] = gpu_used_mib()
+        measured["card_free"] = gpu_free_mib()
+        print(f"  card: {measured['card_used']} MiB used, "
+              f"{measured['card_free']} MiB free", flush=True)
 
     llm_log, _ = run_server(exe, model_path, llm_flags, args.port,
                             timeout=args.timeout, on_ready=_llm_ready)
@@ -507,6 +531,41 @@ def main() -> int:
         problems.append(
             f"the embedder did not answer: "
             f"{measured.get('embedder_detail', 'no detail')}")
+
+    # Both models have to be on the card at the same time. That is what
+    # the app needs, and it is the only way to know whether the plan
+    # holds with the embedder included.
+    llm_vram = measured.get("llm_vram")
+    embedder_vram = measured.get("embedder_vram")
+    card_used = measured.get("card_used")
+    card_free = measured.get("card_free")
+    if llm_vram is not None and embedder_vram is not None:
+        print(f"\nboth models resident: LLM {llm_vram} MiB + embedder "
+              f"{embedder_vram} MiB = {llm_vram + embedder_vram} MiB",
+              flush=True)
+        if llm_vram < 1000:
+            problems.append(
+                f"the LLM holds only {llm_vram} MiB - it is probably not "
+                f"on the GPU")
+        if embedder_vram < 50:
+            problems.append(
+                f"the embedder holds only {embedder_vram} MiB - it is "
+                f"probably not on the GPU")
+    if card_used is not None and card_free is not None:
+        print(f"card after both models: {card_used} MiB used, "
+              f"{card_free} MiB free of {hardware.total_vram_mib}",
+              flush=True)
+        planned_total = (candidate.total_vram_mib
+                         + embedder_cost_mib(candidate.embedder_backend))
+        delta = abs(card_used - planned_total)
+        print(f"planned total: {planned_total:.0f} MiB "
+              f"(delta {delta:.0f} MiB)", flush=True)
+        if delta > args.tolerance_mib:
+            problems.append(
+                f"the card holds {card_used} MiB, the plan says "
+                f"{planned_total:.0f} MiB - off by {delta:.0f} MiB")
+        if card_free < 0:
+            problems.append("the card is over its limit")
 
     # The embedder's VRAM against the plan.
     planned_embedder = embedder_cost_mib(candidate.embedder_backend)

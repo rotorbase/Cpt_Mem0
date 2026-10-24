@@ -53,9 +53,24 @@ COMPUTE_MIB = 392             # CUDA scratch buffer, 9B class
 COMPUTE_MIB_SMALL = 130       # CUDA scratch buffer, small model
 CUDA_CTX_MIB = 320            # CUDA context, per llama-server process
 
-EMBEDDER_WEIGHTS_MIB = 78     # nomic-embed-text-v1.5 Q4_K_M
+#: The embedder is a second llama-server with nomic-embed-text-v1.5
+#: Q4_K_M. Measured on an RTX 3060 with llama.cpp 0.7.0-dev (build
+#: 11798), with the flags the app uses:
+#:
+#: ==========================  ==============
+#: Line                       Measured
+#: ==========================  ==============
+#: ``CUDA0 model buffer``      66.92 MiB
+#: ``CPU_Mapped model``        12.58 MiB (host)
+#: ``CUDA0 compute buffer``    24.52 MiB
+#: ==========================  ==============
+#:
+#: The weights are 66.92 MiB on the card and 12.58 MiB in host RAM. The
+#: compute buffer is 24.52 MiB, not the 130 MiB an earlier measurement
+#: suggested.
+EMBEDDER_WEIGHTS_MIB = 67     # nomic-embed-text-v1.5 Q4_K_M on the GPU
 EMBEDDER_KV_MIB = 12          # at n_ctx 2048
-EMBEDDER_COMPUTE_MIB = 130
+EMBEDDER_COMPUTE_MIB = 25
 
 #: mem0's fact-extraction prompt measured at 10449 tokens. A slot must hold
 #: at least this much or the prompt is truncated and nothing is stored.
