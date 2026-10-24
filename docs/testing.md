@@ -31,7 +31,7 @@ No GPU, no model, no network. Safe at any time, from any directory.
 
     bash "C:/Users/willow/Documents/Cpt_Mem0/test.sh"
 
-Expected: `57 passed`, total under one second.
+Expected: `84 passed`, total under two seconds.
 
 The same thing with the full path to the interpreter, if you prefer:
 
@@ -69,15 +69,39 @@ With the 4B model — one line, no line breaks:
 
     "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/verify_plan.py" --vram 5120 --model Qwen3-4B-Instruct-2507 --quant Q4_K_M --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3-4B-Instruct-2507-GGUF/snapshots/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf" --port 8799
 
-With the 9B:
+With the 9B in Q8_0 — the configuration the planner picks for a 12 GB
+card:
+
+    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/verify_plan.py" --vram 12288 --model Qwen3.5-9B --quant Q8_0 --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf" --port 8799
+
+With the 9B in Q4_K_M — smaller, loads faster, still on the GPU:
 
     "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/verify_plan.py" --vram 12288 --model Qwen3.5-9B --quant Q4_K_M --model-file "C:/Users/willow/.cache/huggingface/hub/Qwen3.5-9B-Q4_K_M.gguf" --port 8799
 
 Takes about 45 seconds — that is the model load.
 
+### What the run has to show
+
+A successful run reports four things:
+
+    planned: Qwen3.5-9B Q8_0, n_ctx 67072, KV q8_0, embedder llamacpp
+    inference: OK - ready.
+    ...
+    n_ctx_slot matches the plan (67072)
+    inference: the server generated a response
+
+The `inference` line is the one that proves the server is usable, not
+merely loaded. The check sends a real completion request; a server that
+answers `/health` but generates nothing is reported as a failure.
+
+If the run ends with `timeout after 90s`, the server came up but the
+check never reached its end condition. Send the output — the three
+causes are a flag the build does not know, a log line this build does
+not print, and a model file that is not where the command says.
+
 Both suites in one go, with the results written to `results/`:
 
-    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/run_tests.py" --hardware --vram 12288 --model-file "C:/Users/willow/.cache/huggingface/hub/Qwen3.5-9B-Q4_K_M.gguf"
+    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/run_tests.py" --hardware --vram 12288 --model Qwen3.5-9B --quant Q8_0 --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf"
 
 ### Step 4 — check that nothing is left behind
 
@@ -116,7 +140,7 @@ or directly:
 
     "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" -m pytest "C:/Users/willow/Documents/Cpt_Mem0/tests" -q
 
-57 tests, about half a second. They cover:
+84 tests, about ten seconds. They cover:
 
 | Area | What is checked |
 |---|---|
@@ -128,6 +152,10 @@ or directly:
 | Catalogue integrity | sizes against the documented table; no MTP or mmproj files |
 | Catalogue geometry | every KV constant follows from the stored GGUF geometry |
 | Card hierarchy | more VRAM never yields a smaller model |
+| KV pool semantics | `-c` is the per-slot limit with `--kv-unified`; the pool is not multiplied |
+| Context rounding | the planned value is a multiple of 256, so the server uses it unchanged |
+| Cascade order | the cache type is degraded last; every tier reaches the context floor |
+| Verification script | the buffer patterns match the real format; the run ends when the server is up |
 | GGUF reader | hybrid detection, cache types, error handling |
 
 These run anywhere. They read no GPU and start no model, so they are
@@ -139,7 +167,7 @@ Measured on this machine, three runs each:
 
 | Command | Duration |
 |---|---|
-| `pytest tests/ -q` | 0,41 – 0,44 s |
+| `pytest tests/ -q` | 10,2 s (84 tests) |
 | `python scripts/run_tests.py` | 0,48 – 0,49 s |
 | `python scripts/regenerate_tiers.py` | 0,09 s |
 | `cpt-mem0 plan` | 0,04 – 0,05 s |
@@ -147,6 +175,10 @@ Measured on this machine, three runs each:
 
 The hardware verification takes as long as the model needs to load —
 45 s for a 9B on this card, plus a few seconds of measurement.
+
+The logic suite grew from 0,4 s to 10,2 s because the verification tests
+now start a real llama-server on the CPU (`-ngl 0`) to prove the
+liveness check works. That keeps the graphics card free.
 
 ### What gets written
 

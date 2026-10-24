@@ -72,7 +72,7 @@ cpt-mem0 update     # update the llama.cpp build (never automatic)
 | Component | State |
 |---|---|
 | GGUF header reader | done, 12 tests |
-| VRAM planner | done, 37 tests |
+| VRAM planner | done, 48 tests |
 | Model catalogue | done, 6 models / 35 quantisations, all sizes and KV constants measured |
 | CLI (`plan`, `models`, `validate-catalogue`) | done |
 | llama.cpp bootstrap and self-update | not started |
@@ -83,13 +83,13 @@ The test suite is pure logic: it reads no GPU and starts no model.
 
 ```
 $ pytest
-57 passed
+84 passed
 ```
 
 There is a second suite that does need a free card — it starts one
-`llama-server` with the planned flags and compares the allocation
-against the prediction. Step-by-step commands are in
-[docs/testing.md](docs/testing.md).
+`llama-server` with the planned flags, asks it to generate something,
+and compares the allocation against the prediction. Step-by-step
+commands are in [docs/testing.md](docs/testing.md).
 
 See [SPEC.md](SPEC.md) for the full design and the open questions.
 
