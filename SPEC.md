@@ -184,13 +184,44 @@ Each step is a *degradation*, never a failure:
 ```
 for model in catalogue.sorted_by_quality_desc:
     for quant in [Q8_0, Q6_K, Q5_K_M, Q4_K_M, Q4_0, IQ3_XXS]:
-        for cache_type in [f16, q8_0, q4_0]:
+        for cache_type in [q8_0, f16, q4_0]:
             for embedder_mode in [gpu, cpu]:
                 cfg = compute(model, quant, cache_type, embedder_mode)
-                if cfg.fits(reserve, headroom):
-                    return cfg
-return "no viable configuration"   # with an explanation of the binding constraint
+                if not cfg.fits(reserve, headroom):        continue
+                if cfg.n_ctx < CONTEXT_FLOOR_TOTAL:        continue   # §4.7
+                if cfg.n_ctx_slot < CONTEXT_FLOOR_SLOT:     continue   # §4.7
+                return cfg
+return "no viable configuration"
 ```
+
+Two constraints gate every candidate: the VRAM budget (§4.1) and the
+context floor (§4.7). A candidate that satisfies the budget but not the
+floor is rejected — a service that cannot extract facts is not a service.
+
+The final failure message names the binding constraint:
+
+> No viable configuration for 4096 MiB of VRAM.
+> The smallest model that can extract facts needs 2120 MiB of weights plus
+> 1570 MiB of KV cache (12288 tokens), plus 610 MiB process overhead and
+> 654 MiB reserve — 4954 MiB in total.
+> Your card is 768 MiB short. Options: a card with 5 GB or more, or set
+> `planner.context_floor` to a lower value if your mem0 version uses a
+> shorter extraction prompt.
+
+### 4.4.1 Configuration
+
+```yaml
+planner:
+  reserve_mib: null         # null = 10 % of total VRAM
+  headroom_mib: null        # null = 6 % of total VRAM
+  context_floor_total: 21000    # minimum n_ctx for the service to function
+  context_floor_slot: 12288     # minimum per-slot context for extraction
+  kv_cache_type_order: [q8_0, f16, q4_0]
+```
+
+The floors are configurable because the extraction prompt length depends on
+the mem0 version and on how the user configures fact extraction. The
+defaults are the measured values.
 
 ### 4.5 KV cache quantization
 
@@ -212,22 +243,89 @@ The launch configuration always contains `--fit off`. With `--fit` enabled,
 after the planner computed a valid configuration. The planner's result must
 be the final word.
 
-### 4.7 Reference results
+### 4.7 Context floor — the service must be able to extract facts
+
+A configuration is only valid if the model can actually do mem0's job.
+Measured on this machine:
+
+```
+prompt eval time = 6110.85 ms / 10449 tokens (1709.91 tokens per second)
+```
+
+mem0's fact-extraction prompt is **~10 500 tokens**. A configuration with
+less context loads, starts, answers chat requests — and silently fails to
+store anything. This is the same class of failure as the `--fit` problem,
+just one layer up: the service appears healthy while its primary function
+is unavailable.
+
+**Hard requirement:**
+
+```
+n_ctx_total  ≥  2 × 10 500  =  21 000      (2 slots: extraction + chat)
+n_ctx_slot   ≥  12 288                        (extraction slot, headroom)
+```
+
+The planner treats the context floor as a **constraint, not a preference**.
+A model/quantization/cache combination that cannot satisfy it is rejected
+and the cascade continues.
+
+Consequence: cards below ~5 GB cannot run this service at all with a
+4B-class model, because the KV cache required for extraction does not fit
+alongside the weights. The planner reports this explicitly rather than
+starting a service that cannot store memories.
+
+### 4.8 Two models are almost never worth it
+
+The obvious idea — a small model for extraction, a large one for chat —
+costs more than it saves. Every additional `llama-server` process costs:
+
+| Overhead | MiB |
+|---|---|
+| CUDA context (per process) | ~320 |
+| Compute buffer (per process) | ~290 |
+| **Total per extra process** | **~610** |
+
+Measured combination results:
+
+| Card | 9B chat + 4B extraction | 9B chat alone |
+|---|---|---|
+| 12 GB | 93 862 (46 931/slot) | 249 146 (124 573/slot) |
+| 8 GB | does not fit | 51 798 (25 899/slot) |
+| 6 GB | does not fit | does not fit |
+
+Splitting costs ~6 000 MiB of context on a 12 GB card and makes the 8 GB
+and 6 GB tiers impossible. Since a 4B extraction model is documented to be
+within ~6 % of a 9B for fact extraction, the single-model design wins on
+every axis that matters.
+
+**Decision: one LLM serves both roles.** The planner may still *consider*
+a split (it fits on a 24 GB+ card for a user who wants a large chat model
+plus a fast extractor), but it is not the default and it is never required.
+
+### 4.9 Reference results
 
 Computed with the verified planner against measured constants
-(RTX 3060 12 GB, embedder resident, 2 slots, reserve 10 % + headroom 6 %):
+(RTX 3060 12 GB, embedder resident, 2 slots, KV `q8_0`, context floor
+21 000 enforced):
 
 | VRAM | Selected configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B Q8_0, KV `q8_0` | 67 520 | 33 760 |
-| 12 GB | Qwen3.5-9B Q4_K_M, KV `q8_0` | 264 200 | 132 100 |
-| 8 GB | gemma-4-E2B Q4_K_XL, KV `q8_0` | 83 590 | 41 795 |
-| 8 GB | Qwen3.5-9B Q4_K_M, KV `q8_0` | 55 244 | 27 622 |
-| 6 GB | gemma-4-E2B Q4_K_XL, KV `q8_0` | 36 228 | 18 114 |
-| 4 GB | Qwen3-4B-Instruct Q4_K_M, KV `q8_0` | 2 394 | 1 197 |
+| 12 GB | Qwen3.5-9B Q4_K_M | 249 146 | 124 573 |
+| 12 GB | Qwen3.5-9B Q8_0 | 63 392 | 31 696 |
+| 8 GB | Qwen3.5-9B Q4_K_M | 51 798 | 25 899 |
+| 8 GB | gemma-4-E2B Q4_K_XL | 78 774 | 39 387 |
+| 6 GB | gemma-4-E2B Q4_K_XL | 34 044 | 17 022 |
+| 6 GB | Qwen3-4B-Instruct Q4_K_M | 23 922 | 11 961 |
+| 5 GB | Qwen3-4B-Instruct Q4_K_M, KV `q4_0` | 26 076 | 13 038 |
+| 4 GB | **no viable configuration** | — | — |
 
-The 4 GB row is the failure mode this product exists to avoid: a model that
-loads but has no usable context.
+The 5 GB row is the true minimum for the service. The 4 GB row is the
+honest answer for cards that small: the KV cache needed for extraction
+does not fit alongside any model that can produce valid JSON.
+
+This is precisely the situation the product exists to resolve — and it
+cannot be resolved by better arithmetic. It is a hardware floor, and the
+tool must say so plainly instead of starting a broken service.
 
 ---
 
@@ -426,7 +524,135 @@ State that must survive an upgrade lives outside the runtime directory.
 
 ---
 
-## 9. Configuration
+## 9. The context floor — a service that cannot store memories
+
+This emerged from planning the low-VRAM tiers and is the single most
+important constraint in the document.
+
+### 9.1 The measurement
+
+mem0's fact-extraction prompt, measured on this machine:
+
+```
+prompt eval time = 6110.85 ms / 10449 tokens (1709.91 tokens per second)
+n_gen = 150, tg = 49.66 t/s
+```
+
+The extraction pass needs a **single slot with ~10 500 tokens**. The
+instruction text alone (fact extraction rules, existing-memory
+instructions, output format specification) is several thousand tokens
+before any conversation content is added.
+
+### 9.2 The failure mode
+
+A configuration with `n_ctx = 4096` — which `--fit` produces by default
+when the model does not fit — behaves like this:
+
+1. The model loads. VRAM is allocated. The port opens.
+2. `/v1/models` answers 200.
+3. Chat requests work.
+4. `mem0.add()` sends the extraction prompt. The prompt is **truncated**.
+5. The model returns malformed JSON, or facts extracted from a fragment.
+6. Either the write fails, or — worse — **wrong facts are stored**.
+
+Nothing reports an error. `status` says healthy. The user's memory quietly
+fills with garbage or stays empty. This is the exact failure the product
+exists to prevent, one level above the `--fit` problem.
+
+### 9.3 The floors
+
+```
+CONTEXT_FLOOR_TOTAL = 21 000     # 2 slots × 10 500
+CONTEXT_FLOOR_SLOT  = 12 288     # extraction slot with headroom
+```
+
+These are **hard constraints** in the planner, checked alongside the VRAM
+budget. A candidate configuration that fits in VRAM but violates the floor
+is rejected and the cascade continues.
+
+### 9.4 The consequence: a hardware floor at ~5 GB
+
+With the floors enforced, the viable card tiers are:
+
+| Card | Viable | Notes |
+|---|---|---|
+| 12 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 249 146 | comfortable |
+| 8 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 51 798 | |
+| 6 GB | ✅ gemma-4-E2B or Qwen3-4B, n_ctx 23 922–34 044 | smaller models only |
+| 5 GB | ✅ Qwen3-4B-Instruct, KV `q4_0`, n_ctx 26 076 | absolute minimum |
+| 4 GB | ❌ | 768 MiB short |
+
+At 4 GB the smallest extract-capable configuration needs:
+
+| Item | MiB |
+|---|---|
+| Qwen3-4B-Instruct Q4_K_M weights | 2120 |
+| KV cache, 12 288 tokens | 1570 |
+| Process overhead (compute + CUDA context) | 610 |
+| Reserve + headroom (10 % + 6 %) | 654 |
+| **Total** | **4954** |
+
+### 9.5 Why two models do not solve this
+
+The obvious idea — a small model for extraction, a large one for chat —
+was evaluated and rejected on measurement.
+
+**Cost of a second `llama-server` process:**
+
+| Overhead | MiB | Source |
+|---|---|---|
+| CUDA context | ~320 | measured (188 MiB observed delta + process baseline) |
+| Compute buffer | ~290 | server log |
+| **Total** | **~610** | |
+
+**Resulting configurations (KV `q8_0`, 2 slots):**
+
+| Card | 9B chat + 4B extraction | 9B chat alone |
+|---|---|---|
+| 12 GB | 93 862 (46 931/slot) | **249 146 (124 573/slot)** |
+| 8 GB | does not fit | **51 798 (25 899/slot)** |
+| 6 GB | does not fit | does not fit (9B) |
+| 5 GB | does not fit | does not fit |
+
+Splitting costs ~6 000 MiB of context on a 12 GB card and eliminates the
+8 GB and 6 GB tiers entirely. The quality argument for splitting is weak:
+a 4B extraction model is documented to be within ~6 % of a 9B for fact
+extraction, and the mem0-ollama-hybrid project rates the 3–4B range as the
+sweet spot.
+
+**Decision: one LLM serves both chat and extraction.** A split remains
+possible for users with 24 GB+ who want a large chat model plus a
+dedicated fast extractor, but it is never the default and never required.
+
+### 9.6 What the tool says when it cannot fit
+
+The planner does not silently degrade. It reports the binding constraint
+and the alternatives:
+
+```
+No viable configuration for 4096 MiB of VRAM.
+
+The smallest model that can extract facts (Qwen3-4B-Instruct Q4_K_M) needs:
+  weights             2120 MiB
+  KV cache (12288 tok) 1570 MiB
+  process overhead     610 MiB
+  reserve + headroom   654 MiB
+  --------------------------------
+  total              4954 MiB
+
+Your card is 768 MiB short.
+
+Options:
+  - use a card with 5 GB or more VRAM
+  - set planner.context_floor_total lower, if your mem0 configuration
+    uses a shorter extraction prompt
+  - run the embedder on CPU (saves 540 MiB) and use a 4B model with
+    KV cache type q4_0
+```
+
+---
+
+## 10. Configuration
 
 ```yaml
 # config.yaml
@@ -470,6 +696,9 @@ llama_cpp:
 planner:
   reserve_mib: null           # null = 10 % of total VRAM
   headroom_mib: null          # null = 6 % of total VRAM
+  context_floor_total: 21000  # min n_ctx for the service to extract facts
+  context_floor_slot: 12288   # min per-slot context for extraction
+  kv_cache_type_order: [q8_0, f16, q4_0]
   calibration: "auto"         # auto | always | never
 
 update:
@@ -481,7 +710,7 @@ config.
 
 ---
 
-## 10. CLI
+## 11. CLI
 
 ```
 cpt-mem0 init                 # interactive setup: detect GPU, fetch binary, pick model
@@ -511,7 +740,7 @@ TOTAL   9841 MiB model  +  1200 reserve  +  737 headroom  =  11778 / 12288
 
 ---
 
-## 11. API surface
+## 12. API surface
 
 REST on `127.0.0.1:8765`, plus an MCP server on the same port.
 
@@ -535,7 +764,7 @@ concept, not an agent-framework feature.
 
 ---
 
-## 12. Health checks and failure handling
+## 13. Health checks and failure handling
 
 | Condition | Detection | Response |
 |---|---|---|
@@ -551,7 +780,7 @@ guess. It is measured once during `init` on the actual machine.
 
 ---
 
-## 13. Verification data
+## 14. Verification data
 
 Every number in this specification was measured, not estimated. The full
 record — logs, derivations, method and caveats — is in
@@ -577,7 +806,7 @@ mem0 2.2.1, qdrant-client 1.19/1.20, Windows 11.
 
 ---
 
-## 14. Implementation phases
+## 15. Implementation phases
 
 | Phase | Scope | Estimate |
 |---|---|---|
@@ -593,11 +822,11 @@ against the data in §13.
 
 ---
 
-## 15. Licensing and third-party components
+## 16. Licensing and third-party components
 
 The project is MIT licensed (`LICENSE`).
 
-### 15.1 Runtime dependencies
+### 16.1 Runtime dependencies
 
 | Component | License | Implication |
 |---|---|---|
@@ -609,7 +838,7 @@ The project is MIT licensed (`LICENSE`).
 
 MIT as the project license accepts all of these as inputs.
 
-### 15.2 Obligations when shipping a bundled environment
+### 16.2 Obligations when shipping a bundled environment
 
 The app builds and ships its own Python environment, which means it
 redistributes Apache-2.0 licensed packages. Required at packaging time:
@@ -624,7 +853,7 @@ Model weights are **downloaded at runtime, never redistributed** by the
 app. Their licenses are surfaced when a model is added, and the catalogue
 records the license per model.
 
-### 15.3 What the app downloads at runtime
+### 16.3 What the app downloads at runtime
 
 | Artifact | Source | License |
 |---|---|---|
@@ -637,7 +866,7 @@ None of these are vendored into the source repository.
 
 ---
 
-## 16. Open questions
+## 17. Open questions
 
 1. **Model catalogue scope.** Which models ship in the default catalogue?
    Options: a curated set of 3–4 popular GGUF architectures, or fetch
@@ -651,3 +880,17 @@ None of these are vendored into the source repository.
 4. **Multi-process store access.** Qdrant embedded forbids it (§3.1). If
    demand appears for direct client access to the store, a Qdrant server
    mode becomes necessary — at the cost of the zero-setup property.
+5. **The 4–5 GB tier.** The context floor (§9) makes 4 GB cards
+   non-viable with a GPU embedder. With the embedder on CPU the shortfall
+   is ~318 MiB, which a `q4_0` KV cache would close. Should the planner
+   allow a sub-floor configuration behind an explicit opt-in
+   (`planner.allow_degraded: true`) that warns that fact extraction may
+   fail, or should it refuse outright? Recommendation: refuse by default,
+   offer the opt-in with a clear warning — the user knows their card better
+   than the planner does.
+6. **Chat quality vs. extraction quality.** One model serves both roles
+   (§9.5). A Qwen3-4B extracts facts at ~94 % of a 9B's quality but is a
+   noticeably weaker chat model. Should the planner weight the two roles
+   differently when picking a model — for instance preferring a model that
+   is good at both over one that is excellent at one? Recommendation:
+   keep it simple, one ranking, and let the user override.

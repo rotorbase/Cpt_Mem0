@@ -295,3 +295,69 @@ Recomputing the running configuration with the planner:
 
 The weight prediction uses the 11 % host-fraction constant; the residual
 difference is that constant's tolerance.
+
+---
+
+## 9. Context floor
+
+### 9.1 Extraction prompt size
+
+Measured on the running stack during a `mem0_add`:
+
+```
+prompt eval time = 6110.85 ms / 10449 tokens (1709.91 tokens per second)
+n_gen = 150, tg = 49.66 t/s, tg_3s = 49.99 t/s
+```
+
+The fact-extraction pass requires a slot with ~10 500 tokens. This is the
+basis for `CONTEXT_FLOOR_SLOT = 12288` and `CONTEXT_FLOOR_TOTAL = 21000`
+in the specification.
+
+### 9.2 Card tiers with the floor enforced
+
+Computed with the planner's budget model, KV `q8_0`, 2 slots, embedder on GPU:
+
+| VRAM | Configuration | `n_ctx` | Per slot |
+|---|---|---|---|
+| 12 GB | Qwen3.5-9B-Q4_K_M | 249 146 | 124 573 |
+| 12 GB | Qwen3.5-9B-Q8_0 | 63 392 | 31 696 |
+| 8 GB | Qwen3.5-9B-Q4_K_M | 51 798 | 25 899 |
+| 8 GB | gemma-4-E2B-Q4_XL | 78 774 | 39 387 |
+| 6 GB | gemma-4-E2B-Q4_XL | 34 044 | 17 022 |
+| 6 GB | Qwen3-4B-Instruct-Q4 | 23 922 | 11 961 |
+| 5 GB | Qwen3-4B-Instruct-Q4, KV `q4_0` | 26 076 | 13 038 |
+| 4 GB | **no viable configuration** | — | — |
+
+Without the floor, the same planner would have proposed `n_ctx = 2178` for
+the 4 GB card — a configuration that loads, answers chat requests, and
+cannot store a single memory.
+
+### 9.3 Two-model comparison
+
+Same budget model, KV `q8_0`, 2 slots:
+
+| VRAM | 9B + 4B (split) | 9B alone |
+|---|---|---|
+| 12 GB | 93 862 (46 931/slot) | 249 146 (124 573/slot) |
+| 8 GB | does not fit (10 011 MiB needed) | 51 798 (25 899/slot) |
+| 6 GB | does not fit (9 683 MiB needed) | does not fit |
+
+The second process costs ~610 MiB (320 CUDA context + 290 compute buffer),
+which is more than the entire KV cache of the 9B at a usable context size.
+
+### 9.4 Minimum configuration breakdown (4 GB attempt)
+
+| Item | MiB |
+|---|---|
+| Qwen3-4B-Instruct Q4_K_M weights | 2120 |
+| KV cache, 12 288 tokens | 1570 |
+| Process overhead | 610 |
+| Reserve (10 %) + headroom (6 %) | 654 |
+| **Total required** | **4954** |
+| **Available** | **4096** |
+| **Shortfall** | **858** |
+
+With the embedder on CPU the shortfall drops to ~318 MiB, which makes the
+4 GB tier marginal rather than impossible for users willing to reduce the
+KV cache type to `q4_0`.
+
