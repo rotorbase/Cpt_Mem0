@@ -4,28 +4,38 @@ Two suites, separated by what they need.
 
 ## Run it — step by step
 
+**Copy the commands as plain text.** The fences around a command in
+this file are markdown, not part of the command. If you paste them
+together with the command, bash sees the backticks as a
+command substitution: three backticks are an unbalanced one, and bash
+waits for a closing backtick instead of running anything. The symptom
+is a terminal that accepts input and does nothing.
+
+**Use absolute paths.** The commands below work from any directory.
+A relative path like `.venv/Scripts/python.exe` only works after a
+`cd` into the repository — from your home directory it does not exist.
+
 ### Step 1 — close Hermes
 
 The watchdog stops the memory stack within about three seconds of Hermes
 closing. Wait until the card is free.
 
-```bash
-nvidia-smi --query-gpu=memory.used,memory.free --format=csv,noheader
-```
+    nvidia-smi --query-gpu=memory.used,memory.free --format=csv,noheader
 
 Expected: `used` well under 1000 MiB. If it is still high, the stack has
 not shut down yet — wait a moment and check again.
 
 ### Step 2 — the logic tests
 
-No GPU, no model, no network. Safe at any time.
+No GPU, no model, no network. Safe at any time, from any directory.
 
-```bash
-cd ~/Documents/Cpt_Mem0
-.venv/Scripts/python.exe scripts/run_tests.py
-```
+    bash "C:/Users/willow/Documents/Cpt_Mem0/test.sh"
 
-Expected: `49 passed`, total under one second.
+Expected: `57 passed`, total under one second.
+
+The same thing with the full path to the interpreter, if you prefer:
+
+    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/run_tests.py"
 
 ### Step 3 — the hardware verification
 
@@ -55,43 +65,23 @@ buffer size`) are only printed for a chat model. An embedding model
 uses a different architecture with no CUDA KV buffer, so the comparison
 has nothing to measure. Use the 4B or the 9B for the hardware check.
 
-With the 4B model:
+With the 4B model — one line, no line breaks:
 
-```bash
-cd ~/Documents/Cpt_Mem0
-.venv/Scripts/python.exe scripts/verify_plan.py \
-  --vram 5120 \
-  --model Qwen3-4B-Instruct-2507 \
-  --quant Q4_K_M \
-  --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3-4B-Instruct-2507-GGUF/snapshots/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf" \
-  --port 8799
-```
+    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/verify_plan.py" --vram 5120 --model Qwen3-4B-Instruct-2507 --quant Q4_K_M --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3-4B-Instruct-2507-GGUF/snapshots/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf" --port 8799
 
 With the 9B:
 
-```bash
-.venv/Scripts/python.exe scripts/verify_plan.py \
-  --vram 12288 \
-  --model Qwen3.5-9B \
-  --quant Q4_K_M \
-  --model-file "C:/Users/willow/.cache/huggingface/hub/Qwen3.5-9B-Q4_K_M.gguf" \
-  --port 8799
-```
+    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/verify_plan.py" --vram 12288 --model Qwen3.5-9B --quant Q4_K_M --model-file "C:/Users/willow/.cache/huggingface/hub/Qwen3.5-9B-Q4_K_M.gguf" --port 8799
 
 Takes about 45 seconds — that is the model load.
 
 Both suites in one go, with the results written to `results/`:
 
-```bash
-.venv/Scripts/python.exe scripts/run_tests.py --hardware --vram 12288 \
-  --model-file "C:/Users/willow/.cache/huggingface/hub/Qwen3.5-9B-Q4_K_M.gguf"
-```
+    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/run_tests.py" --hardware --vram 12288 --model-file "C:/Users/willow/.cache/huggingface/hub/Qwen3.5-9B-Q4_K_M.gguf"
 
 ### Step 4 — check that nothing is left behind
 
-```bash
-nvidia-smi --query-gpu=memory.used,memory.free --format=csv,noheader
-```
+    nvidia-smi --query-gpu=memory.used,memory.free --format=csv,noheader
 
 Expected: back to roughly the starting value.
 
@@ -120,17 +110,13 @@ be interrupted. Measured: a silent hang is cut off after 3,08 s with a
 
 ## Logic tests — no GPU, no network, no model
 
-```
-python scripts/run_tests.py
-```
+    bash "C:/Users/willow/Documents/Cpt_Mem0/test.sh"
 
 or directly:
 
-```
-pytest
-```
+    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" -m pytest "C:/Users/willow/Documents/Cpt_Mem0/tests" -q
 
-49 tests, about half a second. They cover:
+57 tests, about half a second. They cover:
 
 | Area | What is checked |
 |---|---|
@@ -230,9 +216,7 @@ model size).
 The card tiers in SPEC.md, docs/catalogue.md and docs/verification.md
 are generated, not hand-written:
 
-```
-python scripts/regenerate_tiers.py
-```
+    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/regenerate_tiers.py"
 
 If the planner changes, run this and update the tables in the same
 commit. The test suite asserts that the catalogue still matches the
