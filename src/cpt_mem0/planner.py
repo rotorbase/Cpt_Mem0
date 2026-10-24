@@ -150,6 +150,20 @@ class Candidate:
         not exist makes the server abort during argument parsing - before
         it loads anything - so the run produces no output and no
         measurement.
+
+        With ``--kv-unified`` the KV cache is one shared pool: ``-c`` is
+        the context **per slot**, and the pool holds that many tokens in
+        total. Without it, every slot gets its own pool of ``n_ctx``
+        tokens, so the VRAM cost is ``slots × n_ctx``.
+
+        Measured on llama.cpp 0.7.0-dev (build 11798):
+
+        ==================  =====================  ==============
+        Flags               ``-c`` means            VRAM for KV
+        ==================  =====================  ==============
+        ``--kv-unified``    per slot, pool shared  ``n_ctx``
+        without             total, split per slot  ``slots × n_ctx``
+        ==================  =====================  ==============
         """
         flags = [
             "-c", str(self.n_ctx),
@@ -164,6 +178,9 @@ class Candidate:
             # with a value - there is no "--reasoning off".
             "--reasoning-format", "none",
             "--no-context-shift",
+            # The KV cache is a shared pool. This is what makes two slots
+            # affordable: without it, every slot needs its own pool of
+            # n_ctx tokens and the VRAM cost doubles.
             "--kv-unified",
         ]
         if self.cache_type != "f16":
@@ -285,10 +302,30 @@ def evaluate_candidate(
         return None
     mib_per_token = bytes_per_token / (1024 * 1024)
 
-    n_ctx = int(remaining / mib_per_token)
-    n_ctx = (n_ctx // parallel) * parallel
+    # How the KV cache is laid out decides what ``-c`` means.
+    #
+    # With ``--kv-unified`` the pool is shared: it holds ``pool_tokens``
+    # tokens in total and every slot can use up to that much. The
+    # ``-c`` flag is that per-slot limit.
+    #
+    # Without it, every slot gets its own pool of ``n_ctx`` tokens, so
+    # the total is ``slots × n_ctx`` and ``-c`` is that total.
+    if KV_UNIFIED:
+        pool_tokens = int(remaining / mib_per_token)
+        # The server rounds the context up to a multiple of 256. Round
+        # down here so the planned value is one the server will use
+        # exactly, and so the VRAM is not exceeded.
+        pool_tokens = (pool_tokens // KV_BLOCK_TOKENS) * KV_BLOCK_TOKENS
+        n_ctx = pool_tokens
+    else:
+        pool_tokens = int(remaining / mib_per_token)
+        n_ctx = (pool_tokens // parallel) * parallel
     if n_ctx <= 0:
         return None
+
+    # The context floor applies to a single slot: the extraction prompt
+    # needs about 10 500 tokens in one slot.
+    n_ctx_slot = n_ctx if KV_UNIFIED else n_ctx // parallel
 
     budget = _budget(
         total_mib=float(hardware.total_vram_mib),
@@ -298,7 +335,7 @@ def evaluate_candidate(
         embedder_mib=emb,
         reserve_mib=reserve,
         headroom_mib=headroom,
-        kv_mib=n_ctx * mib_per_token,
+        kv_mib=pool_tokens * mib_per_token,
     )
     if budget.free_mib < 0:
         return None
@@ -312,7 +349,7 @@ def evaluate_candidate(
         kv_bytes_per_token=bytes_per_token,
         cache_type=cache_type,
         n_ctx=n_ctx,
-        n_ctx_slot=n_ctx // parallel,
+        n_ctx_slot=n_ctx_slot,
         parallel=parallel,
         embedder_backend=embedder_backend,
         kv_vram_mib=budget.kv_mib,
@@ -359,6 +396,37 @@ def _model_headroom_mib(entry, hardware: Hardware, config: PlannerConfig) -> flo
              + config.reserve_for(hardware.total_vram_mib)
              + config.headroom_for(hardware.total_vram_mib))
     return hardware.total_vram_mib - fixed
+
+
+#: Whether the KV cache is one shared pool (``--kv-unified``) or one
+#: pool per slot.
+#:
+#: With a shared pool, ``-c`` is the context **per slot** and the pool
+#: holds that many tokens in total. Without it, every slot gets its own
+#: pool of ``n_ctx`` tokens, so the VRAM cost is ``slots × n_ctx``.
+#:
+#: Measured on llama.cpp 0.7.0-dev (build 11798):
+#:
+#: ==================  =====================  ==============
+#: Flags               ``-c`` means            VRAM for KV
+#: ==================  =====================  ==============
+#: ``--kv-unified``    per slot, pool shared  ``n_ctx``
+#: without             total, split per slot  ``slots × n_ctx``
+#: ==================  =====================  ==============
+KV_UNIFIED = True
+
+#: llama.cpp allocates the KV cache in blocks of this many tokens, so it
+#: rounds the requested context up to a multiple. A planned value of
+#: 67 122 becomes 67 328 on the server. The planner rounds the same way
+#: so that the value it prints is the value the server uses.
+KV_BLOCK_TOKENS = 256
+
+
+def round_to_kv_block(tokens: int) -> int:
+    """Round a context size up to the server's allocation block."""
+    if tokens <= 0:
+        return 0
+    return ((tokens + KV_BLOCK_TOKENS - 1) // KV_BLOCK_TOKENS) * KV_BLOCK_TOKENS
 
 
 def _rank_by_fit(entries: list, hardware: Hardware,
@@ -425,19 +493,30 @@ def plan_for_hardware(
     calibration_required: dict[str, list[str]] = {}
     cheapest_to_floor: int | None = None
 
-    for entry in ordered:
-        model_id = entry.model_id
-        rank_basis = getattr(entry, "rank_basis", "unmeasured")
-        needs_calibration: list[str] = []
-        for quant in _sorted_quantisations(entry):
-            if getattr(quant, "kv_bytes_per_token", None) is None:
-                # Architecture without a closed-form KV constant
-                # (sliding window, shared KV, pooled encoder). Planning
-                # would need a calibration run on the target GPU, which
-                # this planner does not do.
-                needs_calibration.append(quant.name)
-                continue
-            for cache_type in config.cache_type_order:
+    # The cascade order matters: the cache type is the outer loop.
+    #
+    # The first version walked model -> quantisation -> cache type. On an
+    # 8 GB card that picked the 9B with a q4_0 cache, which reached
+    # 8 472 tokens per slot - below the context floor - while the 4B
+    # with a q8_0 cache reached 92 273. The plan was not viable, but a
+    # viable plan existed.
+    #
+    # Degrading the cache type is the last resort, not the first one
+    # tried. So: every model at q8_0, then every model at f16, then
+    # every model at q4_0.
+    for cache_type in config.cache_type_order:
+        for entry in ordered:
+            model_id = entry.model_id
+            rank_basis = getattr(entry, "rank_basis", "unmeasured")
+            needs_calibration: list[str] = []
+            for quant in _sorted_quantisations(entry):
+                if getattr(quant, "kv_bytes_per_token", None) is None:
+                    # Architecture without a closed-form KV constant
+                    # (sliding window, shared KV, pooled encoder).
+                    # Planning would need a calibration run on the target
+                    # GPU, which this planner does not do.
+                    needs_calibration.append(quant.name)
+                    continue
                 for embedder in config.embedder_backends:
                     candidate = evaluate_candidate(
                         model_id=model_id,
@@ -453,13 +532,12 @@ def plan_for_hardware(
                     )
                     if candidate is None:
                         continue
-                    if (candidate.n_ctx >= config.context_floor_total
-                            and candidate.n_ctx_slot >= config.context_floor_slot):
+                    if (candidate.n_ctx_slot >= config.context_floor_slot):
                         budget = _recompute_budget(candidate, hardware, config)
                         return PlanResult(viable=True, candidate=candidate,
                                           budget=budget)
                     if best_degraded is None or (
-                            candidate.n_ctx > best_degraded.n_ctx):
+                            candidate.n_ctx_slot > best_degraded.n_ctx_slot):
                         best_degraded = candidate
                         best_degraded_budget = _recompute_budget(
                             candidate, hardware, config)
@@ -478,8 +556,8 @@ def plan_for_hardware(
                         "required_total": config.context_floor_total,
                         "required_slot": config.context_floor_slot,
                     })
-        if needs_calibration:
-            calibration_required[model_id] = needs_calibration
+            if needs_calibration:
+                calibration_required[model_id] = needs_calibration
 
     if config.allow_degraded and best_degraded is not None:
         return PlanResult(
@@ -544,11 +622,16 @@ def _required_mib_for_floor(candidate: Candidate, hardware: Hardware,
     """
     if candidate.n_ctx <= 0:
         return int(hardware.total_vram_mib)
-    mib_per_token = candidate.kv_vram_mib / candidate.n_ctx
+    # The KV pool holds ``pool_tokens`` tokens; with a shared pool that is
+    # ``n_ctx``, otherwise it is ``n_ctx_slot * parallel``.
+    pool_tokens = (candidate.n_ctx if KV_UNIFIED
+                   else candidate.n_ctx_slot * candidate.parallel)
+    mib_per_token = candidate.kv_vram_mib / pool_tokens
     fixed = (candidate.total_vram_mib - candidate.kv_vram_mib
              + config.reserve_for(hardware.total_vram_mib)
              + config.headroom_for(hardware.total_vram_mib))
-    required_kv = config.context_floor_total * mib_per_token
+    # The floor applies to one slot.
+    required_kv = config.context_floor_slot * mib_per_token
     return int(round(fixed + required_kv))
 
 

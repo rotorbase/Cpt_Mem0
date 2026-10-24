@@ -23,11 +23,11 @@ $ cpt-mem0 plan
 GPU     RTX 3060                          12288 MiB total
 LLM     Qwen3.5-9B Q8_0                   9086 MiB
         weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
-        n_ctx 67122  (33561 per slot, 2 slots)
-        --fit off  --flash-attn on  --reasoning off
+        n_ctx 67072  (67072 per slot, 2 slots)
+        --fit off  --flash-attn on  --reasoning-format none  --kv-unified
         ranking basis: unmeasured
 EMBED   llamacpp                          on GPU
-TOTAL   10351 MiB used  +  1200 reserve  +  737 headroom  =  12288 / 12288
+TOTAL   10350 MiB used  +  1200 reserve  +  737 headroom  =  12287 / 12288
 ```
 
 `plan` starts nothing and touches nothing. It prints the configuration

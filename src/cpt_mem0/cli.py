@@ -49,7 +49,11 @@ def _format_plan(result: PlanResult, hardware: Hardware) -> str:
                      f"({c.kv_bytes_per_token} B/tok, {c.cache_type})")
         lines.append(f"        n_ctx {c.n_ctx}  ({c.n_ctx_slot} per slot, "
                      f"{c.parallel} slots)")
-        lines.append(f"        --fit off  --flash-attn on  --reasoning off")
+        # Print the flags that are actually used. A flag shown here that
+        # does not exist in the target build would make the server abort
+        # during argument parsing, before it loads anything.
+        lines.append(f"        --fit off  --flash-attn on  "
+                     f"--reasoning-format none  --kv-unified")
         lines.append(f"        ranking basis: {c.model_rank_basis}")
         lines.append(f"EMBED   {c.embedder_backend}".ljust(42)
                      + f"{'0 MiB (in-process ONNX)' if c.embedder_backend == 'fastembed' else 'on GPU'}")

@@ -68,10 +68,34 @@ docs/
 - **Never write a launch flag from memory.** Check it against
   `llama-server --help`. A flag that does not exist makes the server
   abort before it loads anything, which looks like a hang.
+- **A readiness check must not depend on a single log line.** The
+  server only reports the buffer sizes at debug level, so waiting for
+  `KV buffer size` means waiting for a line this build never prints.
+  Readiness is an HTTP answer plus a state, not a string match.
+- **Loading a model is not using it.** A verification that only checks
+  `/health` proves that the server is up, not that it generates.
+  `scripts/verify_plan.py` sends a completion request and reports the
+  answer; an embedding-only server is reported as "not applicable",
+  not as a failure.
+- **The KV cache layout decides what `-c` means.** With
+  `--kv-unified` it is the context per slot and the pool is shared;
+  without it, it is the total and each slot gets its own pool. See
+  SPEC §4.10 — getting this wrong makes every context number wrong by
+  a factor of the slot count.
+- **The server rounds the context up** to a multiple of 256 tokens.
+  Plan a value that is already a multiple, so the printed value is the
+  value the server uses.
+- **Degrade the cache type last.** The cascade tries every model at
+  `q8_0` before it tries any model at `q4_0`; otherwise it settles for
+  a configuration that misses the context floor while a viable one
+  exists. See SPEC §4.11.
 - **Commands in documentation are plain text with absolute paths.**
   Markdown fences and relative paths both break copy-paste: the fences
   become an unbalanced command substitution, and a relative path fails
   as soon as the working directory is not the repository.
+- **Verify the logic on the CPU.** A check that needs a model can run
+  llama-server with `-ngl 0` and never touch the GPU. That keeps the
+  user's graphics card free while the code is still proven.
 
 ## Running the tests
 

@@ -312,7 +312,7 @@ slot, chat model at `Q4_K_M`, KV `q8_0`):
 | Card | 9B chat + 4B extraction | 9B chat alone |
 |---|---|---|
 | 12 GB | 74 638 (37 319/slot) | 263 802 (131 901/slot) |
-| 8 GB | does not fit | 54 846 (27 423/slot) |
+| 8 GB | does not fit | 54 784 (54 784/slot) |
 | 6 GB | does not fit | does not fit |
 
 Splitting costs ~6 000 MiB of context on a 12 GB card and makes the 8 GB
@@ -332,11 +332,11 @@ enforced). Regenerate with `scripts/regenerate_tiers.py`:
 
 | VRAM | Selected configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B Q8_0 | 67 122 | 33 561 |
-| 8 GB | Qwen3.5-9B Q4_K_M | 54 846 | 27 423 |
-| 6 GB | Qwen3.5-9B IQ3_XXS | 36 330 | 18 165 |
-| 5 GB | Qwen3.5-4B Q5_K_M | 29 078 | 14 539 |
-| 4 GB | Qwen3.5-4B IQ3_XXS | 48 050 | 24 025 |
+| 12 GB | Qwen3.5-9B Q8_0 | 67 072 | 67 072 |
+| 8 GB | Qwen3.5-9B Q4_K_M | 54 784 | 54 784 |
+| 6 GB | Qwen3.5-9B IQ3_XXS | 36 096 | 36 096 |
+| 5 GB | Qwen3.5-4B Q5_K_M | 28 928 | 28 928 |
+| 4 GB | Qwen3.5-4B IQ3_XXS | 47 872 | 47 872 |
 
 The tiers are monotonic: more VRAM yields a better model, not merely a
 larger context. A card that cannot hold a model's weights never receives
@@ -346,6 +346,55 @@ The 4 GB tier is reachable, but only with a coarse quantisation
 (`IQ3_XXS`). Whether that quantisation extracts facts well enough is
 the open measurement of §17.4 — the planner computes the fit, not the
 quality.
+
+### 4.10 What `-c` means — the KV pool decides
+
+`--kv-unified` makes the KV cache one shared pool. That changes what the
+`-c` flag means, and getting it wrong makes the plan wrong in a way that
+only shows up on real hardware.
+
+| Flags | `-c` means | VRAM for the KV cache |
+|---|---|---|
+| with `--kv-unified` | context **per slot**, pool shared | `n_ctx` |
+| without | total, split per slot | `slots × n_ctx` |
+
+Measured on llama.cpp 0.7.0-dev (build 11798), with `-c 67122
+--parallel 2`:
+
+- with `--kv-unified`: the server reported `n_ctx_slot = 67328`
+- without: the server reported `n_ctx_slot = 33792`
+
+The planner therefore treats `-c` as the per-slot limit and budgets one
+pool of `n_ctx` tokens — not `n_ctx / slots`. Two slots share the pool;
+neither gets half of it. This is what makes two slots affordable: the
+alternative doubles the KV cost.
+
+Two details the planner reproduces:
+
+- **The server rounds the context up** to a multiple of 256 tokens,
+  because that is the allocation block of the KV tensors. A planned
+  67 122 becomes 67 328 on the server. The planner rounds down to the
+  same block size, so the value it prints is the value the server uses
+  and the VRAM is never exceeded.
+- **The context floor applies to one slot**, not to the total. The
+  extraction prompt needs about 10 500 tokens in a single slot.
+
+The verification run on 2026-10-24 found the first version of this
+wrong: it planned 33 561 per slot and the server ran 67 328. The VRAM
+prediction was correct to within 4 MiB (9 775 MiB measured against
+9 811 MiB predicted), so the budget model was sound — only the meaning
+of `-c` was not.
+
+### 4.11 The cascade order
+
+The cache type is degraded **last**, not first. The cascade tries every
+model at `q8_0`, then every model at `f16`, then every model at `q4_0`.
+
+Walking model → quantisation → cache type instead would reach a
+configuration that fits in VRAM but misses the context floor, while a
+viable one exists. On an 8 GB card that ordering produced the 9B with a
+`q4_0` cache at 8 472 tokens per slot — below the floor — while the 4B
+with a `q8_0` cache reached 92 273.
 
 The arithmetic is not the only constraint. Even when the budget fits,
 the context floor is a hard gate: a configuration that loads, answers
@@ -641,11 +690,11 @@ With the floors enforced, the viable card tiers are:
 
 | Card | Viable | Notes |
 |---|---|---|
-| 12 GB | ✅ Qwen3.5-9B Q8_0, n_ctx 67 122 | comfortable |
-| 8 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 54 846 | |
-| 6 GB | ✅ Qwen3.5-9B IQ3_XXS, n_ctx 36 330 | coarse quantisation |
-| 5 GB | ✅ Qwen3.5-4B Q5_K_M, n_ctx 29 078 | |
-| 4 GB | ✅ Qwen3.5-4B IQ3_XXS, n_ctx 48 050 | fits, but at `IQ3_XXS` |
+| 12 GB | ✅ Qwen3.5-9B Q8_0, n_ctx 67 072 | comfortable |
+| 8 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 54 784 | |
+| 6 GB | ✅ Qwen3.5-9B IQ3_XXS, n_ctx 36 096 | coarse quantisation |
+| 5 GB | ✅ Qwen3.5-4B Q5_K_M, n_ctx 28 928 | |
+| 4 GB | ✅ Qwen3.5-4B IQ3_XXS, n_ctx 47 872 | fits, but at `IQ3_XXS` |
 
 At 4 GB the smallest configuration that reaches the context floor needs:
 
@@ -682,7 +731,7 @@ was evaluated and rejected on measurement.
 | Card | 9B chat + 4B extraction | 9B chat alone |
 |---|---|---|
 | 12 GB | 74 638 (37 319/slot) | **263 802 (131 901/slot)** |
-| 8 GB | does not fit | **54 846 (27 423/slot)** |
+| 8 GB | does not fit | **54 784 (54 784/slot)** |
 | 6 GB | does not fit | does not fit (9B) |
 | 5 GB | does not fit | does not fit |
 
@@ -804,7 +853,7 @@ cpt-mem0 migrate --from pgvector
 GPU     RTX 3060                          12288 MiB total
 LLM     Qwen3.5-9B Q8_0                   9086 MiB
         weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
-        n_ctx 67122  (33561 per slot, 2 slots)
+        n_ctx 67072  (67072 per slot, 2 slots)
         --fit off  --flash-attn on  --reasoning off
         ranking basis: unmeasured
 EMBED   llamacpp                          on GPU

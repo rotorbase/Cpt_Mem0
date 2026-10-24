@@ -142,6 +142,23 @@ LOADED_MARKERS = (
     "load_tensors: offloading",
 )
 
+#: The server only prints the buffer sizes at debug level. Without this
+#: flag the run waits for a line that never arrives, and the check ends
+#: in a timeout although the server came up in seconds.
+#:
+#: Verified on llama.cpp 0.7.0-dev (build 11798): with the default
+#: verbosity the log contains "model loaded" but no "buffer size" line
+#: at all. With ``--verbose`` it contains
+#:
+#: ==========================  =====================
+#: Line                       Matched by
+#: ==========================  =====================
+#: ``CUDA0 model buffer size`` ``MODEL_BUFFER_RE``
+#: ``CUDA0 compute buffer``    ``COMPUTE_RE``
+#: ``CUDA0 KV buffer size``    ``KV_RE``
+#: ==========================  =====================
+VERBOSE_FLAG = "--verbose"
+
 
 def wait_for_http(port: int, timeout: float = 1.0) -> bool:
     """Return True if the server answers an HTTP request.
@@ -164,6 +181,83 @@ def wait_for_http(port: int, timeout: float = 1.0) -> bool:
         except Exception:
             continue
     return False
+
+
+def run_inference(port: int, timeout: float = 60.0) -> tuple[bool, str]:
+    """Ask the server to generate something and report what came back.
+
+    A server that loads a model and answers /health has not proven that
+    it can run a prompt. The first version of this script only checked
+    readiness, so a run could report "the model is in VRAM" without any
+    token ever being generated.
+
+    The request is deliberately small - one short completion. It is a
+    liveness check, not a benchmark.
+
+    Returns ``(ok, detail)``. ``detail`` carries the generated text or
+    the error, so a failure says what went wrong instead of just "no".
+
+    An embedding-only server answers a completion request with
+    ``"the current context does not support logits computation"``. That
+    is not a failure of the server - it is what such a server does. The
+    result is reported as ``(True, "not applicable: ...")`` so the
+    caller can tell it apart from a real failure.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    payload = json.dumps({
+        "prompt": "Reply with the single word: ready",
+        "n_predict": 8,
+        "temperature": 0.0,
+        "stream": False,
+    }).encode("utf-8")
+
+    def _attempt() -> tuple[bool, str, bool]:
+        """One request. Returns (ok, detail, retryable)."""
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/completion",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raw = ""
+            try:
+                raw = exc.read().decode("utf-8", "replace")
+            except Exception:
+                pass
+            if "does not support logits computation" in raw:
+                return True, ("not applicable: this server serves embeddings "
+                              "and cannot generate text"), False
+            if exc.code == 503:
+                # The server is still loading the model. The log says
+                # "model loaded" before it accepts requests, so the first
+                # attempt can arrive too early.
+                return False, f"HTTP 503: {raw[:120]}", True
+            return False, f"HTTP {exc.code}: {exc.reason} - {raw[:200]}", False
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}", True
+
+        text = (body.get("content") or "").strip()
+        if not text:
+            return False, "the server answered with an empty completion", False
+        return True, text, False
+
+    deadline = time.time() + timeout
+    last_detail = "no attempt"
+    while True:
+        ok, detail, retryable = _attempt()
+        if ok:
+            return True, detail
+        last_detail = detail
+        if not retryable or time.time() >= deadline:
+            return False, last_detail
+        time.sleep(1.0)
 
 
 def run_server(exe: str, model: Path, flags: list[str], port: int,
@@ -243,6 +337,21 @@ def run_server(exe: str, model: Path, flags: list[str], port: int,
                 # Give the allocator a moment to settle, then stop.
                 time.sleep(3)
                 break
+            if loaded and not KV_RE.search("".join(log_lines)):
+                # The model is in VRAM and the server answers requests,
+                # but it did not print a KV buffer line. Waiting for a
+                # line that never comes means the run ends in a timeout
+                # with a working server and no measurement.
+                #
+                # The KV cache is optional in the log: an embedding model
+                # has none, and a build may report it differently. What
+                # matters for the budget is the total VRAM, which is
+                # measured directly.
+                if wait_for_http(port):
+                    if on_ready is not None:
+                        on_ready("".join(log_lines))
+                    time.sleep(3)
+                    break
             if proc.poll() is not None and output_queue.empty():
                 break
             # Ask the server directly. This works even when the log
@@ -360,8 +469,18 @@ def main() -> int:
         """
         measured["log"] = log_so_far
         measured["gpu_used"] = gpu_used_mib()
+        # Prove the server can actually generate. A server that answers
+        # /health has not proven that.
+        ok, detail = run_inference(args.port)
+        measured["inference_ok"] = ok
+        measured["inference_detail"] = detail
+        print(f"  inference: {'OK' if ok else 'FAILED'} - {detail}",
+              flush=True)
 
-    log, _ = run_server(exe, model_path, candidate.as_flags(), args.port,
+    # The server only reports the buffer sizes at debug level.
+    server_flags = candidate.as_flags() + [VERBOSE_FLAG]
+
+    log, _ = run_server(exe, model_path, server_flags, args.port,
                         timeout=args.timeout or 10**9,
                         on_ready=_measure_while_running)
     after = gpu_used_mib()
@@ -381,7 +500,7 @@ def main() -> int:
     print("measured from the server log:", flush=True)
     if context_match:
         print(f"  n_ctx_slot         {context_match.group(1)} "
-              f"(total {candidate.n_ctx})", flush=True)
+              f"(the -c value, per slot)", flush=True)
     if model_match:
         print(f"  model buffer       {model_match.group(1)} MiB", flush=True)
     if compute_match:
@@ -420,20 +539,33 @@ def main() -> int:
         if delta > args.tolerance_mib:
             problems.append(f"weights off by {delta:.0f} MiB")
     if context_match:
-        # The server reports the per-slot context; the planner predicted
-        # the total. They have to agree.
+        # The server reports the per-slot context, which with
+        # --kv-unified is the -c value itself. The planner predicts the
+        # same number, so they have to agree exactly.
         measured_slot = int(context_match.group(1))
         if measured_slot != candidate.n_ctx_slot:
             problems.append(
                 f"n_ctx_slot {measured_slot} != planned "
-                f"{candidate.n_ctx_slot} (total {candidate.n_ctx})")
+                f"{candidate.n_ctx_slot}")
         else:
-            print(f"n_ctx_slot matches the plan ({measured_slot} per slot, "
-                  f"{candidate.n_ctx} total)", flush=True)
+            print(f"n_ctx_slot matches the plan ({measured_slot})", flush=True)
     else:
         problems.append(
             "the server log did not report a context size - the "
             "comparison could not be made")
+
+    if "inference_ok" in measured:
+        if measured["inference_ok"]:
+            print(f"inference: the server generated a response",
+                  flush=True)
+        else:
+            problems.append(
+                f"the server loaded the model but did not generate "
+                f"anything: {measured.get('inference_detail', 'no detail')}")
+    else:
+        problems.append(
+            "no inference was attempted - the server never reached the "
+            "point where a request could be sent")
 
     if problems:
         print()

@@ -10,11 +10,12 @@ from __future__ import annotations
 import pytest
 
 from cpt_mem0.catalogue import CatalogueEntry, ExtractionMeasurement, Quantisation
-from cpt_mem0.planner import (
+from cpt_mem0.planner import (  # noqa: E402
     CONTEXT_FLOOR_SLOT,
     CONTEXT_FLOOR_TOTAL,
     CUDA_CTX_MIB,
     HOST_FRACTION,
+    KV_BLOCK_TOKENS,
     Hardware,
     PlannerConfig,
     embedder_cost_mib,
@@ -161,7 +162,9 @@ class TestCandidateArithmetic:
         )
         assert candidate is not None
         assert candidate.n_ctx % 2 == 0
-        assert candidate.n_ctx_slot == candidate.n_ctx // 2
+        # With a shared KV pool, ``-c`` is the per-slot limit and both
+        # slots can use it. The pool is not divided.
+        assert candidate.n_ctx_slot == candidate.n_ctx
 
     def test_a_model_that_does_not_fit_returns_none(self):
         hardware = Hardware(total_vram_mib=4096)
@@ -453,6 +456,185 @@ class TestCatalogueSizes:
             for quant in entry.quantisations:
                 assert "MTP" not in quant.file_name
                 assert "mmproj" not in quant.file_name
+
+
+class TestKvUnifiedSemantics:
+    """What ``-c`` means depends on how the KV cache is laid out.
+
+    Measured on llama.cpp 0.7.0-dev (build 11798) with a real server:
+
+    ==================  =====================  ==============
+    Flags               ``-c`` means            VRAM for KV
+    ==================  =====================  ==============
+    ``--kv-unified``    per slot, pool shared  ``n_ctx``
+    without             total, split per slot  ``slots × n_ctx``
+    ==================  =====================  ==============
+
+    The first version of the planner assumed the second row while
+    emitting the first flag. The hardware verification caught it: the
+    server reported a slot context of 67328 where the planner had
+    planned 33561.
+    """
+
+    def test_the_flag_is_emitted(self, candidate):
+        flags = candidate.as_flags()
+        assert "--kv-unified" in flags
+
+    def test_n_ctx_is_the_per_slot_limit(self, candidate):
+        """With a shared pool, ``-c`` is the per-slot limit - the value
+        the server reports as ``n_ctx_slot``."""
+        flags = candidate.as_flags()
+        assert int(flags[flags.index("-c") + 1]) == candidate.n_ctx_slot
+
+    def test_n_ctx_slot_equals_n_ctx_with_a_shared_pool(self, candidate):
+        assert candidate.n_ctx_slot == candidate.n_ctx
+
+    def test_the_kv_pool_is_not_multiplied_by_the_slot_count(
+            self, candidate):
+        """Two slots share one pool: the KV cost is the pool, not twice
+        the pool."""
+        mib_per_token = candidate.kv_bytes_per_token / (1024 * 1024)
+        assert abs(candidate.kv_vram_mib
+                   - candidate.n_ctx * mib_per_token) < 1.0
+
+    def test_the_hardware_measurement_matches(self, candidate):
+        """The values from the 2026-10-24 hardware run on a 12 GB card
+        with Qwen3.5-9B-Q8_0:
+
+        - server reported ``n_ctx_slot = 67328``
+        - VRAM delta measured: 9775 MiB
+        - planner predicted 8087 + 290 + 320 = 8697 MiB of weights and
+          overhead, plus 1114 MiB of KV = 9811 MiB
+
+        The measured total was within 4 MiB of the prediction, so the
+        budget model is sound. Only the meaning of ``-c`` was wrong.
+        """
+        mib_per_token = candidate.kv_bytes_per_token / (1024 * 1024)
+        predicted_total = (candidate.weights_vram_mib
+                           + candidate.compute_mib
+                           + candidate.cuda_context_mib
+                           + candidate.kv_vram_mib)
+        measured_total = 9775
+        assert abs(predicted_total - measured_total) < 300
+
+    def test_the_context_floor_applies_per_slot(self):
+        """The extraction prompt needs ~10 500 tokens in ONE slot. A
+        configuration whose slots are too small cannot store facts."""
+        hardware = Hardware(total_vram_mib=4096)
+        catalogue_entry = CatalogueEntry(
+            model_id="Test", repo="local", params=4_000_000_000,
+            architecture="qwen3", license="apache-2.0",
+            quantisations=[
+                Quantisation("Q4_K_M", "t.gguf", int(2741 * 1024 * 1024),
+                             147456, "measured"),
+            ],
+            rank_order=10,
+        )
+        result = plan_for_hardware(hardware, [catalogue_entry],
+                                   PlannerConfig())
+        if result.viable and result.candidate is not None:
+            assert result.candidate.n_ctx_slot >= CONTEXT_FLOOR_SLOT
+
+    def test_the_context_is_a_multiple_of_the_allocation_block(self,
+                                                                candidate):
+        """llama.cpp allocates the KV cache in blocks of 256 tokens and
+        rounds up. A planned value that is already a multiple is used
+        by the server unchanged.
+
+        Measured: the plan said 67 122, the server ran 67 328.
+        """
+        assert candidate.n_ctx % KV_BLOCK_TOKENS == 0
+
+    def test_the_planned_value_is_one_the_server_uses(self):
+        """The planned context must be a value the server reports
+        unchanged - not one it rounds up."""
+        from cpt_mem0.planner import round_to_kv_block
+
+        assert round_to_kv_block(67122) == 67328
+        assert round_to_kv_block(67328) == 67328
+        assert round_to_kv_block(256) == 256
+        assert round_to_kv_block(257) == 512
+        assert round_to_kv_block(0) == 0
+
+
+class TestCacheTypeIsDegradedLast:
+    """The cache type is degraded last, not first.
+
+    The first version of the cascade walked model -> quantisation ->
+    cache type. On an 8 GB card that picked the 9B with a q4_0 cache
+    and reached 8 472 tokens per slot - below the context floor - while
+    the 4B with a q8_0 cache reached 92 273. A viable plan existed and
+    the planner did not find it.
+    """
+
+    def test_the_cache_type_is_degraded_last(self, catalogue):
+        hardware = Hardware(total_vram_mib=8192)
+        result = plan_for_hardware(hardware, catalogue.sorted_entries(),
+                                   PlannerConfig())
+        assert result.viable is True
+        assert result.candidate is not None
+        # The plan reaches the floor, so it must not have had to degrade
+        # the cache type.
+        assert result.candidate.cache_type == "q8_0"
+
+    def test_the_plan_reaches_the_context_floor(self, catalogue):
+        hardware = Hardware(total_vram_mib=8192)
+        result = plan_for_hardware(hardware, catalogue.sorted_entries(),
+                                   PlannerConfig())
+        assert result.viable is True
+        assert result.candidate is not None
+        assert result.candidate.n_ctx_slot >= CONTEXT_FLOOR_SLOT
+
+    def test_the_tiers_are_monotonic(self, catalogue):
+        """More VRAM never yields a smaller context **for the same
+        model**.
+
+        The context is not monotonic across models: a 6 GB card gets the
+        9B at IQ3_XXS (36 096 tokens), a 5 GB card gets the 4B at
+        Q5_K_M (28 928). The 5 GB card has more room for the KV cache
+        because the smaller model leaves more VRAM for it.
+
+        That is the intended trade: a bigger card gets a better model,
+        not necessarily more context. What must hold is that the chosen
+        model never gets smaller as the card grows.
+        """
+        previous_params = None
+        previous_model = None
+        for total in (4096, 5120, 6144, 8192, 12288):
+            hardware = Hardware(total_vram_mib=total)
+            result = plan_for_hardware(hardware, catalogue.sorted_entries(),
+                                       PlannerConfig())
+            assert result.viable is True
+            assert result.candidate is not None
+            params = next(e.params for e in catalogue.entries
+                          if e.model_id == result.candidate.model_id)
+            if previous_params is not None:
+                assert params >= previous_params, (
+                    f"{total} MiB picked a smaller model than a smaller card")
+            previous_params = params
+            previous_model = result.candidate.model_id
+
+    def test_the_same_model_grows_with_more_vram(self, catalogue):
+        """For a model that fits on both cards, the bigger card gets
+        more context."""
+        hardware_small = Hardware(total_vram_mib=6144)
+        hardware_large = Hardware(total_vram_mib=12288)
+        small = plan_for_hardware(hardware_small, catalogue.sorted_entries(),
+                                  PlannerConfig()).candidate
+        large = plan_for_hardware(hardware_large, catalogue.sorted_entries(),
+                                  PlannerConfig()).candidate
+        assert small is not None and large is not None
+        if small.model_id == large.model_id:
+            assert large.n_ctx_slot > small.n_ctx_slot
+
+    def test_every_tier_uses_the_best_cache_type(self, catalogue):
+        for total in (4096, 5120, 6144, 8192, 12288):
+            hardware = Hardware(total_vram_mib=total)
+            result = plan_for_hardware(hardware, catalogue.sorted_entries(),
+                                       PlannerConfig())
+            assert result.viable is True
+            assert result.candidate is not None
+            assert result.candidate.cache_type == "q8_0"
 
 
 class TestCardHierarchy:

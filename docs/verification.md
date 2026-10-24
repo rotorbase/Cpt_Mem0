@@ -339,6 +339,82 @@ difference is that constant's tolerance.
 
 ---
 
+## 8a. Hardware verification against a live llama-server
+
+### 8a.1 The run of 2026-10-24
+
+RTX 3060 12 GB, Qwen3.5-9B-Q8_0, KV cache `q8_0`, two slots, on an
+otherwise idle card.
+
+Server flags:
+
+```
+-c 67122 --parallel 2 -ngl 99 --fit off --flash-attn on
+--reasoning-format none --no-context-shift --kv-unified
+--cache-type-k q8_0 --cache-type-v q8_0
+```
+
+| Quantity | Predicted | Measured | |
+|---|---|---|---|
+| Model weights | 8 087 MiB | — | — |
+| KV cache | 1 114 MiB | — | — |
+| Compute buffer | 290 MiB | — | — |
+| CUDA context | 320 MiB | — | — |
+| Embedder | 540 MiB | — | — |
+| **Total VRAM delta** | **9 811 MiB** | **9 775 MiB** | **36 MiB off (0.4 %)** |
+| Slot context | 33 561 | 67 328 | ✗ |
+
+The VRAM budget model is accurate: the prediction was within 0.4 % of
+the measured delta. The context prediction was not.
+
+### 8a.2 What the run found
+
+**`-c` was planned as the total, but the server used it per slot.**
+
+With `--kv-unified` the KV cache is one shared pool. The `-c` flag is
+the limit per slot, and the pool holds that many tokens in total. The
+planner had assumed the opposite: it treated `-c` as the total budget
+and divided it by the slot count to get the per-slot context.
+
+Measured on the same build, with `-c 67122 --parallel 2`:
+
+| Flags | Server reported `n_ctx_slot` |
+|---|---|
+| with `--kv-unified` | 67 328 |
+| without | 33 792 |
+
+The fix moves the division out of the planner: `-c` is now the per-slot
+limit, and the KV pool is budgeted once.
+
+**The server rounds the context up to a multiple of 256.**
+
+The planned 67 122 arrived as 67 328 — 206 tokens more, because the KV
+tensors are allocated in blocks of 256. The planner now rounds down to
+the same block size, so the printed value is the value the server runs
+with, and the VRAM is never exceeded.
+
+**The cascade degraded the cache type too early.**
+
+Walking model → quantisation → cache type reached a configuration that
+fits but misses the context floor, while a viable one existed. On an
+8 GB card the 9B with a `q4_0` cache reached 8 472 tokens per slot —
+below the floor of 12 288 — while the 4B with a `q8_0` cache reached
+92 273. The cache type is now the outer loop: every model at `q8_0`
+first, then every model at `f16`, then every model at `q4_0`.
+
+### 8a.3 Re-check after the fix
+
+The same flags, planned by the corrected planner:
+
+```
+n_ctx 67072  (67072 per slot, 2 slots)
+```
+
+The server accepted the value unchanged and reported `n_ctx_slot =
+67072`. The plan and the server now agree exactly.
+
+---
+
 ## 9. Context floor
 
 ### 9.1 Extraction prompt size
@@ -364,11 +440,11 @@ quantisation, then best KV cache type. Embedder on GPU, 2 slots:
 
 | VRAM | Configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B-Q8_0 | 67 122 | 33 561 |
-| 8 GB | Qwen3.5-9B-Q4_K_M | 54 846 | 27 423 |
-| 6 GB | Qwen3.5-9B-IQ3_XXS | 36 330 | 18 165 |
-| 5 GB | Qwen3.5-4B-Q5_K_M | 29 078 | 14 539 |
-| 4 GB | Qwen3.5-4B-IQ3_XXS | 48 050 | 24 025 |
+| 12 GB | Qwen3.5-9B-Q8_0 | 67 072 | 67 072 |
+| 8 GB | Qwen3.5-9B-Q4_K_M | 54 784 | 54 784 |
+| 6 GB | Qwen3.5-9B-IQ3_XXS | 36 096 | 36 096 |
+| 5 GB | Qwen3.5-4B-Q5_K_M | 28 928 | 28 928 |
+| 4 GB | Qwen3.5-4B-IQ3_XXS | 47 872 | 47 872 |
 
 The hierarchy is monotonic: more VRAM yields a better model, not merely
 a larger context. `tests/test_planner.py::TestCardHierarchy` asserts it.

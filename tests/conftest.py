@@ -23,7 +23,11 @@ from cpt_mem0.catalogue import (  # noqa: E402
     catalogue_from_dict,
     load_catalogue,
 )
-from cpt_mem0.planner import Hardware, PlannerConfig  # noqa: E402
+from cpt_mem0.planner import (  # noqa: E402
+    Hardware,
+    PlannerConfig,
+    plan_for_hardware,
+)
 
 
 @pytest.fixture(scope="session")
@@ -40,3 +44,19 @@ def hardware_3060_12gb() -> Hardware:
 @pytest.fixture
 def config() -> PlannerConfig:
     return PlannerConfig()
+
+
+@pytest.fixture
+def candidate(catalogue):
+    """A planned candidate for the 12 GB reference card.
+
+    Used by the tests that check the launch flags and the KV semantics
+    against a real configuration.
+    """
+    hardware = Hardware(total_vram_mib=12288, name="RTX 3060",
+                        vendor="nvidia")
+    result = plan_for_hardware(hardware, catalogue.sorted_entries(),
+                               PlannerConfig())
+    assert result.viable is True
+    assert result.candidate is not None
+    return result.candidate
