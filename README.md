@@ -124,6 +124,16 @@ See [SPEC.md](SPEC.md) for the full design and the open questions.
   The planner therefore ranks by what actually fits, and the card tiers
   come out monotonic: 12 GB and 8 GB get the 9B, 6 GB gets the 9B at
   `IQ3_XXS`, 5 GB and 4 GB get the 4B.
+- **The context is planned per slot, not per card.** With `--kv-unified`
+  the KV cache is one shared pool, so `-c` is the limit per slot and the
+  pool is not multiplied by the slot count. Getting this backwards makes
+  every context figure wrong by a factor of two.
+- **The server rounds the context up** to a multiple of 256 tokens, so
+  the planner plans a value that is already a multiple. The printed
+  number is then the number the server runs with.
+- **Loading a model is not using it.** The verification suite asks the
+  server to generate something. A server that answers `/health` has not
+  proven that it can answer a prompt.
 - **The quantised KV sizes are not guesses.** `q8_0` stores 32 values in
   34 bytes, `q4_0` in 18 — llama.cpp's block layouts. An estimate of
   1.125 bytes per value for `q8_0` was 5.9 % off, and made every context
