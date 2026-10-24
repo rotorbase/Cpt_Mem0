@@ -423,7 +423,7 @@ The MCP server runs on the same port as the REST API, under `/mcp`.
 
 ```
 - User utilizes an NVIDIA RTX 3060 with 12 GB of VRAM (score 0.49)
-- The user's project is named Hermes-VTOL (score 0.42)
+- The user's display language is German (score 0.42)
 ```
 
 This is the shape an agent wants to inject into a prompt. The raw tools

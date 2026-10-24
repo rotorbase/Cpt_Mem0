@@ -34,7 +34,7 @@ from cpt_mem0.store import VectorStore, cosine_similarity  # noqa: E402
 #: The sentences that go in. They are about different things, so a
 #: query has to actually discriminate to find the right one.
 FACTS = [
-    "The user flies a VTOL aircraft with a 3.2 m wingspan.",
+    "The user rides a bicycle to the office every day.",
     "The development board uses an Intel chipset with a faulty NIC.",
     "The build server runs on a machine with 64 GB of RAM.",
     "The coffee machine in the office is a fully automatic model.",
@@ -44,7 +44,7 @@ FACTS = [
 #: has to come from the meaning, not from the words.
 QUERIES = [
     ("What aircraft does the user fly?",
-     "The user flies a VTOL aircraft with a 3.2 m wingspan."),
+     "The user rides a bicycle to the office every day."),
     ("Which network card is broken?",
      "The development board uses an Intel chipset with a faulty NIC."),
     ("How much memory does the build server have?",

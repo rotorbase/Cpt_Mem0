@@ -55,7 +55,7 @@ class TestVectorStore:
         old one wrote."""
         path = tmp_path / "store.json"
         first = VectorStore(path)
-        first.add("the user flies a VTOL aircraft", [0.1, 0.2, 0.3])
+        first.add("the user rides a bicycle to the office", [0.1, 0.2, 0.3])
         first.add("the office has a fully automatic coffee machine",
                   [0.9, 0.8, 0.7])
         first.save()
@@ -64,7 +64,7 @@ class TestVectorStore:
         assert second.count == 2
         assert second.dimension == 3
         assert second.texts() == [
-            "the user flies a VTOL aircraft",
+            "the user rides a bicycle to the office",
             "the office has a fully automatic coffee machine",
         ]
 
@@ -93,12 +93,12 @@ class TestVectorStore:
         """The query is a different wording. The match has to come from
         the meaning - which is what the vector carries."""
         store = VectorStore(tmp_path / "store.json")
-        store.add("the user flies a VTOL aircraft", [1.0, 0.1, 0.0])
+        store.add("the user rides a bicycle to the office", [1.0, 0.1, 0.0])
         store.add("the build server has 64 GB of RAM", [0.0, 0.1, 1.0])
         store.add("the office has a coffee machine", [0.1, 1.0, 0.0])
 
         results = store.search([0.98, 0.05, 0.02], limit=3)
-        assert results[0][0] == "the user flies a VTOL aircraft"
+        assert results[0][0] == "the user rides a bicycle to the office"
 
     def test_the_dimension_is_checked(self, tmp_path):
         store = VectorStore(tmp_path / "store.json")
