@@ -99,17 +99,22 @@ model, not the main model. Catalogue resolution must exclude `MTP/` and
 
 ## 3. KV constants per model
 
+Every constant was read from the model's own GGUF header with this
+project's reader (`src/cpt_mem0/gguf.py`) — from a local file or through
+an HTTP range request against the HuggingFace repository. None of it
+required a GPU.
+
 | Model | `full_attention_interval` | KV layers | Bytes/token (f16) | Source |
 |---|---|---|---|---|
-| Qwen3.5-9B | 4 | 8 of 32 | **32 768** | **measured** (8 logs) |
-| Qwen3.5-4B | 4 | 8 of 32 | 32 768 | formula (= 9B) |
-| Qwen3-8B | 1 | all | 147 456 | formula |
-| Llama-3.1-8B | 1 | all | 131 072 | formula |
-| Qwen3-4B-Instruct-2507 | 1 | all | 147 456 | formula |
+| Qwen3.5-9B | 4 | 8 of 32 | **32 768** | **measured** (8 logs + header) |
+| Qwen3.5-4B | 4 | 8 of 32 | **32 768** | **measured** (header) |
+| Qwen3-8B | 1 | 36 of 36 | **147 456** | **measured** (header) |
+| Llama-3.1-8B-Instruct | 1 | 32 of 32 | **131 072** | **measured** (header) |
+| Qwen3-4B-Instruct-2507 | 1 | 36 of 36 | **147 456** | **measured** (header) |
 | gemma-4-E2B-it | 1 + sliding window | shared | **calibrate** | not reliable |
 
-The `gemma4` architecture uses `attention.shared_kv_layers` and
-`attention.sliding_window`, so the per-layer formula does not apply.
+The `gemma4` architecture uses `attention.shared_kv_layers = 20` and
+`attention.sliding_window = 512`, so the per-layer formula does not apply.
 Measured behaviour of a related model: 12 MiB at `n_ctx` 2048, identical
 to a completely different architecture — a floor, not a slope.
 
@@ -117,47 +122,72 @@ to a completely different architecture — a floor, not a slope.
 `CUDA0 KV buffer size` from the log, derive the slope. Costs one model
 load (~45 s for a 9B) and is cached in `models.json`.
 
+### 3.1 Quantised cache sizes
+
+| Cache type | Bytes per 32 values | Bytes per value | Share of f16 |
+|---|---|---|---|
+| `f16` | 64 | 2.0 | 100 % |
+| `q8_0` | 34 | 1.0625 | 53.125 % |
+| `q4_0` | 18 | 0.5625 | 28.125 % |
+
+From llama.cpp's block layouts (`ggml/src/ggml-common.h`). The `q8_0`
+value was previously estimated at 1.125 bytes per value, 5.9 % too
+pessimistic.
+
 ---
 
 ## 4. Resulting selections
 
-Computed with the measured constants, KV `q8_0`, 2 slots, embedder on GPU,
-context floor 21 000 enforced.
+**Generated from the planner** (`scripts/regenerate_tiers.py`). KV
+`q8_0`, 2 slots, embedder on GPU, context floor 21 000 enforced.
 
 ### 12 GB (12288 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3.5-9B | Q4_K_M | 249 146 | 124 573 | 4821 MiB |
-| 2 | Qwen3.5-9B | Q8_0 | 63 392 | 31 696 | 8087 MiB |
-
-Q8_0 is offered as an explicit alternative for users who want maximum
-fidelity and can accept half the context.
+| 1 | Qwen3.5-9B | Q8_0 | 67 122 | 33 561 | 8087 MiB |
 
 ### 8 GB (8192 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3.5-9B | Q4_K_M | 51 798 | 25 899 | 4821 MiB |
-| 2 | gemma-4-E2B-it | Q4_K_M | 78 774 | 39 387 | 2637 MiB |
-| 3 | Qwen3-4B-Instruct-2507 | Q4_K_M | 25 688 | 12 844 | 2120 MiB |
+| 1 | Qwen3.5-9B | Q4_K_M | 54 846 | 27 423 | 4821 MiB |
 
 ### 6 GB (6144 MiB)
 
 | Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | gemma-4-E2B-it | Q4_K_M | 34 044 | 17 022 | 2637 MiB |
-| 2 | Qwen3-4B-Instruct-2507 | Q4_K_M | 23 922 | 11 961 | 2120 MiB |
+| 1 | Qwen3.5-9B | IQ3_XXS | 36 330 | 18 165 | 3409 MiB |
 
-### 5 GB (5120 MiB) — absolute minimum
+### 5 GB (5120 MiB)
 
-| Rank | Model | Quant | KV type | `n_ctx` | Per slot |
+| Rank | Model | Quant | `n_ctx` | Per slot | Weights |
 |---|---|---|---|---|---|
-| 1 | Qwen3-4B-Instruct-2507 | Q4_K_M | `q4_0` | 26 076 | 13 038 |
+| 1 | Qwen3.5-4B | Q5_K_M | 29 078 | 14 539 | 2668 MiB |
 
-### 4 GB (4096 MiB) — no viable configuration
+### 4 GB (4096 MiB)
 
-See SPEC §9.4 for the breakdown and the 858 MiB shortfall.
+| Rank | Model | Quant | `n_ctx` | Per slot | Weights |
+|---|---|---|---|---|---|
+| 1 | Qwen3.5-4B | IQ3_XXS | 48 050 | 24 025 | 1654 MiB |
+
+### 4.1 Largest reachable context
+
+The cascade prefers quality; this table is the opposite extreme — the
+largest context any configuration on the card can reach. Both are valid
+answers to different questions.
+
+| VRAM | Configuration | `n_ctx` | Per slot |
+|---|---|---|---|
+| 12 GB | Qwen3.5-4B-IQ3_XXS, KV `q4_0` | 876 850 | 438 425 |
+| 8 GB | Qwen3.5-4B-IQ3_XXS, KV `q4_0` | 482 156 | 241 078 |
+| 6 GB | Qwen3.5-4B-IQ3_XXS, KV `q4_0` | 286 458 | 143 229 |
+| 5 GB | Qwen3.5-4B-IQ3_XXS, KV `q4_0` | 188 496 | 94 248 |
+| 4 GB | Qwen3.5-4B-IQ3_XXS, KV `q4_0` | 90 760 | 45 380 |
+
+`IQ3_XXS` is a coarse quantisation. Whether it extracts facts well
+enough is an open measurement (SPEC §17.4) — the planner does not know
+yet, and does not pretend to.
 
 ---
 

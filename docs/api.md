@@ -79,36 +79,36 @@ cpt-mem0 plan [--model ID] [--quant QUANT] [--embedder auto|gpu|cpu]
 Output (text mode):
 
 ```
-GPU     NVIDIA GeForce RTX 3060          12288 MiB total
-LLM     Qwen3.5-9B-Q4_K_M.gguf           5417 MiB
-        weights 4821 MiB  KV 4380 MiB (32768 B/tok, q8_0)
-        n_ctx 249146  (124573 per slot, 2 slots)
+GPU     RTX 3060                          12288 MiB total
+LLM     Qwen3.5-9B Q8_0                   9086 MiB
+        weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
+        n_ctx 67122  (33561 per slot, 2 slots)
         --fit off  --flash-attn on  --reasoning off
-EMBED   nomic-embed-text-v1.5            llamacpp, GPU
-        weights 78 MiB  KV 12 MiB
-STORE   qdrant embedded  ~/.local/share/cpt-mem0/store
-TOTAL   9841 MiB model  +  1200 reserve  +  737 headroom  =  11778 / 12288
+        ranking basis: unmeasured
+EMBED   llamacpp                          on GPU
+TOTAL   10351 MiB used  +  1200 reserve  +  737 headroom  =  12288 / 12288
 ```
 
 Output (JSON mode) — the machine-readable contract:
 
 ```json
 {
-  "gpu": {"name": "NVIDIA GeForce RTX 3060", "total_mib": 12288},
+  "gpu": {"name": "RTX 3060", "vendor": "nvidia", "total_mib": 12288},
   "llm": {
-    "model": "Qwen3.5-9B", "quantisation": "Q4_K_M",
-    "file": "Qwen3.5-9B-Q4_K_M.gguf", "size_mib": 5417,
-    "weights_vram_mib": 4821, "kv_vram_mib": 4380,
-    "kv_bytes_per_token": 32768, "cache_type": "q8_0",
-    "n_ctx": 249146, "n_ctx_slot": 124573, "parallel": 2,
-    "flags": ["--fit", "off", "--flash-attn", "on", "--reasoning", "off"]
+    "model": "Qwen3.5-9B", "quantisation": "Q8_0",
+    "file": "Qwen3.5-9B-Q8_0.gguf", "size_mib": 9086,
+    "weights_vram_mib": 8087, "kv_vram_mib": 1114,
+    "kv_bytes_per_token": 17408, "cache_type": "q8_0",
+    "n_ctx": 67122, "n_ctx_slot": 33561, "parallel": 2,
+    "rank_basis": "unmeasured",
+    "flags": ["-c", "67122", "--parallel", "2", "-ngl", "99",
+              "--fit", "off", "--flash-attn", "on", "--reasoning", "off",
+              "--no-context-shift", "--kv-unified",
+              "--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]
   },
-  "embedder": {"backend": "llamacpp", "model": "nomic-embed-text-v1.5",
-               "vram_mib": 540},
-  "store": {"provider": "qdrant", "mode": "embedded",
-            "path": "/home/user/.local/share/cpt-mem0/store"},
-  "budget": {"total_mib": 12288, "reserved_mib": 1200,
-             "headroom_mib": 737, "free_mib": 510},
+  "embedder": {"backend": "llamacpp"},
+  "budget": {"total_mib": 12288, "used_mib": 10351, "reserved_mib": 1200,
+             "headroom_mib": 737, "free_mib": 1937},
   "viable": true
 }
 ```
@@ -119,13 +119,15 @@ When nothing fits, `viable` is `false` and `diagnostics` explains why:
 {
   "viable": false,
   "diagnostics": {
-    "reason": "context_floor",
-    "required_mib": 4954, "available_mib": 4096, "shortfall_mib": 858,
-    "detail": "The smallest model that can extract facts needs 2120 MiB of weights plus 1570 MiB of KV cache (12288 tokens), plus 610 MiB process overhead and 654 MiB reserve.",
+    "reason": "context_floor_not_met",
+    "required_mib": 3406, "available_mib": 4096, "shortfall_mib": 0,
+    "detail": {"model": "Qwen3.5-4B", "n_ctx": 48050, "n_ctx_slot": 24025,
+               "required_total": 21000, "required_slot": 12288},
+    "calibration_required": {},
     "options": [
-      "use a card with 5 GB or more VRAM",
+      "use a card with more VRAM",
       "set planner.context_floor_total lower if your mem0 configuration uses a shorter extraction prompt",
-      "run the embedder on CPU (saves 540 MiB) and use KV cache type q4_0"
+      "set planner.allow_degraded: true to run anyway, accepting that fact extraction may fail"
     ]
   }
 }

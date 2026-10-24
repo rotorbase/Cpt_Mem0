@@ -20,14 +20,18 @@ turned off.
 ```
 $ cpt-mem0 plan
 
-GPU     NVIDIA GeForce RTX 3060          12288 MiB total
-LLM     Qwen3.5-9B-Q8_0.gguf             9086 MiB
-        weights 8045 MiB  KV 1058 MiB (32768 B/tok, q8_0)
-        n_ctx 67520  (33760 per slot, 2 slots)
-EMBED   nomic-embed-text-v1.5            llamacpp, GPU
-STORE   qdrant embedded
-TOTAL   9841 MiB model  +  1200 reserve  +  737 headroom  =  11778 / 12288
+GPU     RTX 3060                          12288 MiB total
+LLM     Qwen3.5-9B Q8_0                   9086 MiB
+        weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
+        n_ctx 67122  (33561 per slot, 2 slots)
+        --fit off  --flash-attn on  --reasoning off
+        ranking basis: unmeasured
+EMBED   llamacpp                          on GPU
+TOTAL   10351 MiB used  +  1200 reserve  +  737 headroom  =  12288 / 12288
 ```
+
+`plan` starts nothing and touches nothing. It prints the configuration
+that `start` would use.
 
 ## What it does
 
@@ -63,8 +67,26 @@ cpt-mem0 update     # update the llama.cpp build (never automatic)
 
 ## Status
 
-Specification phase. See [SPEC.md](SPEC.md) for the full design and the
-open questions.
+**Phase 1 — the planner is implemented and tested.**
+
+| Component | State |
+|---|---|
+| GGUF header reader | done, 12 tests |
+| VRAM planner | done, 37 tests |
+| Model catalogue | done, 6 models / 35 quantisations, all sizes and KV constants measured |
+| CLI (`plan`, `models`, `validate-catalogue`) | done |
+| llama.cpp bootstrap and self-update | not started |
+| Daemon, REST and MCP server | not started |
+| Store integration | not started |
+
+The test suite is pure logic: it reads no GPU and starts no model.
+
+```
+$ pytest
+49 passed
+```
+
+See [SPEC.md](SPEC.md) for the full design and the open questions.
 
 ## Documents
 
@@ -91,6 +113,15 @@ open questions.
 - **One model, not two.** A second `llama-server` costs ~610 MiB of CUDA
   context and compute buffer — more than the entire KV cache of the 9B at
   a usable context size.
+- **A larger card should get a better model.** Ranking the catalogue only
+  by quality would hand a 4 GB card the same small model as a 12 GB card.
+  The planner therefore ranks by what actually fits, and the card tiers
+  come out monotonic: 12 GB and 8 GB get the 9B, 6 GB gets the 9B at
+  `IQ3_XXS`, 5 GB and 4 GB get the 4B.
+- **The quantised KV sizes are not guesses.** `q8_0` stores 32 values in
+  34 bytes, `q4_0` in 18 — llama.cpp's block layouts. An estimate of
+  1.125 bytes per value for `q8_0` was 5.9 % off, and made every context
+  figure in the documentation too small.
 
 ## License
 

@@ -205,10 +205,10 @@ them and the output labels the basis.
 The final failure message names the binding constraint:
 
 > No viable configuration for 4096 MiB of VRAM.
-> The smallest model that can extract facts needs 2120 MiB of weights plus
-> 1570 MiB of KV cache (12288 tokens), plus 610 MiB process overhead and
-> 654 MiB reserve — 4954 MiB in total.
-> Your card is 768 MiB short. Options: a card with 5 GB or more, or set
+> The smallest model that can extract facts needs 1654 MiB of weights plus
+> 108 MiB of KV cache (12288 tokens), plus 990 MiB process overhead and
+> 654 MiB reserve — 3406 MiB in total.
+> Your card is 0 MiB short. Options: a card with 5 GB or more, or set
 > `planner.context_floor` to a lower value if your mem0 version uses a
 > shorter extraction prompt.
 
@@ -306,12 +306,13 @@ costs more than it saves. Every additional `llama-server` process costs:
 | Compute buffer (per process) | ~290 |
 | **Total per extra process** | **~610** |
 
-Measured combination results:
+Measured combination results (extraction model with a fixed 12 288-token
+slot, chat model at `Q4_K_M`, KV `q8_0`):
 
 | Card | 9B chat + 4B extraction | 9B chat alone |
 |---|---|---|
-| 12 GB | 93 862 (46 931/slot) | 249 146 (124 573/slot) |
-| 8 GB | does not fit | 51 798 (25 899/slot) |
+| 12 GB | 74 638 (37 319/slot) | 263 802 (131 901/slot) |
+| 8 GB | does not fit | 54 846 (27 423/slot) |
 | 6 GB | does not fit | does not fit |
 
 Splitting costs ~6 000 MiB of context on a 12 GB card and makes the 8 GB
@@ -325,28 +326,31 @@ plus a fast extractor), but it is not the default and it is never required.
 
 ### 4.9 Reference results
 
-Computed with the verified planner against measured constants
-(RTX 3060 12 GB, embedder resident, 2 slots, KV `q8_0`, context floor
-21 000 enforced):
+Computed with the shipped planner against measured constants (RTX 3060
+12 GB, embedder resident, 2 slots, KV `q8_0`, context floor 21 000
+enforced). Regenerate with `scripts/regenerate_tiers.py`:
 
 | VRAM | Selected configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B Q4_K_M | 249 146 | 124 573 |
-| 12 GB | Qwen3.5-9B Q8_0 | 63 392 | 31 696 |
-| 8 GB | Qwen3.5-9B Q4_K_M | 51 798 | 25 899 |
-| 8 GB | gemma-4-E2B Q4_K_XL | 78 774 | 39 387 |
-| 6 GB | gemma-4-E2B Q4_K_XL | 34 044 | 17 022 |
-| 6 GB | Qwen3-4B-Instruct Q4_K_M | 23 922 | 11 961 |
-| 5 GB | Qwen3-4B-Instruct Q4_K_M, KV `q4_0` | 26 076 | 13 038 |
-| 4 GB | **no viable configuration** | — | — |
+| 12 GB | Qwen3.5-9B Q8_0 | 67 122 | 33 561 |
+| 8 GB | Qwen3.5-9B Q4_K_M | 54 846 | 27 423 |
+| 6 GB | Qwen3.5-9B IQ3_XXS | 36 330 | 18 165 |
+| 5 GB | Qwen3.5-4B Q5_K_M | 29 078 | 14 539 |
+| 4 GB | Qwen3.5-4B IQ3_XXS | 48 050 | 24 025 |
 
-The 5 GB row is the true minimum for the service. The 4 GB row is the
-honest answer for cards that small: the KV cache needed for extraction
-does not fit alongside any model that can produce valid JSON.
+The tiers are monotonic: more VRAM yields a better model, not merely a
+larger context. A card that cannot hold a model's weights never receives
+that model.
 
-This is precisely the situation the product exists to resolve — and it
-cannot be resolved by better arithmetic. It is a hardware floor, and the
-tool must say so plainly instead of starting a broken service.
+The 4 GB tier is reachable, but only with a coarse quantisation
+(`IQ3_XXS`). Whether that quantisation extracts facts well enough is
+the open measurement of §17.4 — the planner computes the fit, not the
+quality.
+
+The arithmetic is not the only constraint. Even when the budget fits,
+the context floor is a hard gate: a configuration that loads, answers
+chat requests and cannot store a single memory is not a service. The
+tool refuses those and reports the shortfall.
 
 ---
 
@@ -631,27 +635,34 @@ These are **hard constraints** in the planner, checked alongside the VRAM
 budget. A candidate configuration that fits in VRAM but violates the floor
 is rejected and the cascade continues.
 
-### 9.4 The consequence: a hardware floor at ~5 GB
+### 9.4 The consequence: the card tiers
 
 With the floors enforced, the viable card tiers are:
 
 | Card | Viable | Notes |
 |---|---|---|
-| 12 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 249 146 | comfortable |
-| 8 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 51 798 | |
-| 6 GB | ✅ gemma-4-E2B or Qwen3-4B, n_ctx 23 922–34 044 | smaller models only |
-| 5 GB | ✅ Qwen3-4B-Instruct, KV `q4_0`, n_ctx 26 076 | absolute minimum |
-| 4 GB | ❌ | 768 MiB short |
+| 12 GB | ✅ Qwen3.5-9B Q8_0, n_ctx 67 122 | comfortable |
+| 8 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 54 846 | |
+| 6 GB | ✅ Qwen3.5-9B IQ3_XXS, n_ctx 36 330 | coarse quantisation |
+| 5 GB | ✅ Qwen3.5-4B Q5_K_M, n_ctx 29 078 | |
+| 4 GB | ✅ Qwen3.5-4B IQ3_XXS, n_ctx 48 050 | fits, but at `IQ3_XXS` |
 
-At 4 GB the smallest extract-capable configuration needs:
+At 4 GB the smallest configuration that reaches the context floor needs:
 
 | Item | MiB |
 |---|---|
-| Qwen3-4B-Instruct Q4_K_M weights | 2120 |
-| KV cache, 12 288 tokens | 1570 |
-| Process overhead (compute + CUDA context) | 610 |
+| Qwen3.5-4B IQ3_XXS weights | 1654 |
+| KV cache, 12 288 tokens | 108 |
+| Process overhead (compute + CUDA context + embedder) | 990 |
 | Reserve + headroom (10 % + 6 %) | 654 |
-| **Total** | **4954** |
+| **Total** | **3406** |
+| **Available** | **4096** |
+| **Shortfall** | **0** |
+
+The floor is still real: a configuration below the context floor is
+rejected, and the planner reports how many MiB are missing. The 4 GB
+card fits at a coarse quantisation; whether that quantisation extracts
+valid facts is the open measurement of §17.4.
 
 ### 9.5 Why two models do not solve this
 
@@ -670,8 +681,8 @@ was evaluated and rejected on measurement.
 
 | Card | 9B chat + 4B extraction | 9B chat alone |
 |---|---|---|
-| 12 GB | 93 862 (46 931/slot) | **249 146 (124 573/slot)** |
-| 8 GB | does not fit | **51 798 (25 899/slot)** |
+| 12 GB | 74 638 (37 319/slot) | **263 802 (131 901/slot)** |
+| 8 GB | does not fit | **54 846 (27 423/slot)** |
 | 6 GB | does not fit | does not fit (9B) |
 | 5 GB | does not fit | does not fit |
 
@@ -693,22 +704,22 @@ and the alternatives:
 ```
 No viable configuration for 4096 MiB of VRAM.
 
-The smallest model that can extract facts (Qwen3-4B-Instruct Q4_K_M) needs:
-  weights             2120 MiB
-  KV cache (12288 tok) 1570 MiB
-  process overhead     610 MiB
-  reserve + headroom   654 MiB
+The smallest model that can extract facts (Qwen3.5-4B IQ3_XXS) needs:
+  weights              1654 MiB
+  KV cache (12288 tok)  108 MiB
+  process overhead      990 MiB
+  reserve + headroom    654 MiB
   --------------------------------
-  total              4954 MiB
+  total               3406 MiB
 
-Your card is 768 MiB short.
+Your card is 0 MiB short.
 
 Options:
   - use a card with 5 GB or more VRAM
   - set planner.context_floor_total lower, if your mem0 configuration
     uses a shorter extraction prompt
-  - run the embedder on CPU (saves 540 MiB) and use a 4B model with
-    KV cache type q4_0
+  - set planner.allow_degraded: true to start anyway, accepting that
+    fact extraction may fail
 ```
 
 ---
@@ -790,14 +801,14 @@ cpt-mem0 migrate --from pgvector
 `plan` output example:
 
 ```
-GPU     NVIDIA GeForce RTX 3060          12288 MiB total
-LLM     Qwen3.5-9B-Q8_0.gguf             9086 MiB
-        weights 8045 MiB  KV 1058 MiB (32768 B/tok, f16→q8_0)
-        n_ctx 67520  (33760 per slot, 2 slots)
-EMBED   nomic-embed-text-v1.5            llamacpp, GPU
-        weights 78 MiB  KV 12 MiB
-STORE   qdrant embedded  ~/.local/share/cpt-mem0/store
-TOTAL   9841 MiB model  +  1200 reserve  +  737 headroom  =  11778 / 12288
+GPU     RTX 3060                          12288 MiB total
+LLM     Qwen3.5-9B Q8_0                   9086 MiB
+        weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
+        n_ctx 67122  (33561 per slot, 2 slots)
+        --fit off  --flash-attn on  --reasoning off
+        ranking basis: unmeasured
+EMBED   llamacpp                          on GPU
+TOTAL   10351 MiB used  +  1200 reserve  +  737 headroom  =  12288 / 12288
 ```
 
 ---
