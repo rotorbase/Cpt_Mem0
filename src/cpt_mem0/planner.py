@@ -144,7 +144,13 @@ class Candidate:
         return self.n_ctx_slot >= 12288
 
     def as_flags(self) -> list[str]:
-        """The llama-server flags this configuration implies."""
+        """The llama-server flags this configuration implies.
+
+        Every flag here must exist in the target build. A flag that does
+        not exist makes the server abort during argument parsing - before
+        it loads anything - so the run produces no output and no
+        measurement.
+        """
         flags = [
             "-c", str(self.n_ctx),
             "--parallel", str(self.parallel),
@@ -153,7 +159,10 @@ class Candidate:
             # renegotiate it at runtime.
             "--fit", "off",
             "--flash-attn", "on",
-            "--reasoning", "off",
+            # mem0 parses the model's JSON output itself; thought tags
+            # would only get in the way. The flag is --reasoning-format
+            # with a value - there is no "--reasoning off".
+            "--reasoning-format", "none",
             "--no-context-shift",
             "--kv-unified",
         ]

@@ -30,10 +30,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue as queue_mod
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -107,6 +109,12 @@ def run_server(exe: str, model: Path, flags: list[str], port: int,
                timeout: int = 240) -> tuple[str, int]:
     """Start the server, wait for it, return (log text, exit code).
 
+    The output is read on a separate thread. Reading it with
+    ``readline()`` in the main thread blocks until the next line
+    arrives - and during the model load, no line arrives for tens of
+    seconds. The timeout would then never be checked, and the run would
+    hang forever.
+
     The server is always terminated, including on Ctrl+C - a model left
     in VRAM is worse than a failed check.
     """
@@ -117,23 +125,46 @@ def run_server(exe: str, model: Path, flags: list[str], port: int,
                             errors="replace")
     # Job object: if this process dies hard, Windows kills the server.
     job = _assign_job(proc)
+
     log_lines: list[str] = []
+    output_queue: queue_mod.Queue = queue_mod.Queue()
+
+    def _reader() -> None:
+        try:
+            if proc.stdout is not None:
+                for line in proc.stdout:
+                    output_queue.put(line)
+        except (OSError, ValueError):
+            pass
+        finally:
+            output_queue.put(None)
+
+    thread = threading.Thread(target=_reader, daemon=True)
+    thread.start()
+
     deadline = time.time() + timeout
+    listening = False
     try:
-        while time.time() < deadline:
-            line = proc.stdout.readline() if proc.stdout else ""
-            if not line:
-                if proc.poll() is not None:
-                    break
-                time.sleep(0.2)
-                continue
-            log_lines.append(line)
-            if "server is listening" in line.lower() or "main: server is running" in line.lower():
-                # Give the allocator a moment to settle, then stop.
-                time.sleep(3)
+        while True:
+            try:
+                line = output_queue.get(timeout=0.2)
+            except queue_mod.Empty:
+                line = ""
+            if line is None:
                 break
-        else:
-            print(f"  timeout after {timeout}s")
+            if line:
+                log_lines.append(line)
+                lowered = line.lower()
+                if "server is listening" in lowered or "main: server is running" in lowered:
+                    listening = True
+                    # Give the allocator a moment to settle, then stop.
+                    time.sleep(3)
+                    break
+            if proc.poll() is not None and output_queue.empty():
+                break
+            if time.time() > deadline:
+                print(f"  timeout after {timeout}s")
+                break
     except KeyboardInterrupt:
         print("\n  interrupted")
     finally:
@@ -143,12 +174,15 @@ def run_server(exe: str, model: Path, flags: list[str], port: int,
                 proc.wait(timeout=20)
             except subprocess.TimeoutExpired:
                 proc.kill()
+        thread.join(timeout=5)
         if job is not None:
             try:
                 import ctypes
                 ctypes.WinDLL("kernel32").CloseHandle(job)
             except Exception:
                 pass
+    if not listening and not log_lines:
+        print("  the server produced no output")
     return "".join(log_lines), proc.returncode
 
 
