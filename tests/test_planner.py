@@ -21,6 +21,7 @@ from cpt_mem0.planner import (  # noqa: E402
     KV_BLOCK_TOKENS,
     Hardware,
     PlannerConfig,
+    compute_buffer_mib,
     embedder_cost_mib,
     evaluate_candidate,
     kv_bytes_for_cache,
@@ -228,9 +229,14 @@ class TestContextFloor:
         assert CONTEXT_FLOOR_SLOT == 12288
         assert CONTEXT_FLOOR_TOTAL == 21000
 
-    def test_a_4gb_card_is_rejected(self):
-        """docs/verification.md section 9.2: the 4 GB tier has no viable
-        configuration with the GPU embedder.
+    def test_a_4gb_card_reaches_the_floor(self):
+        """The 4 GB tier works.
+
+        It was rejected while the compute buffer was planned at a
+        constant of 392 MiB - a value measured at a context of 67 072.
+        The buffer grows with the context, and at the context the 4B
+        actually gets, it is 130 MiB. That freed enough room for the
+        context to clear the floor.
 
         The KV constant used here is Qwen3-4B's (147456 B/token, dense
         architecture), not the hybrid 9B's.
@@ -241,8 +247,22 @@ class TestContextFloor:
         result = plan_for_hardware(
             hardware, entries,
             PlannerConfig(embedder_backends=("llamacpp",)))
-        assert result.viable is False
-        assert result.diagnostics["reason"] == "context_floor_not_met"
+        assert result.viable is True
+        assert result.candidate is not None
+        assert result.candidate.n_ctx_slot >= CONTEXT_FLOOR_SLOT
+
+    def test_a_4gb_card_fits_within_the_card(self):
+        """The plan has to fit, with the reserve and the headroom."""
+        hardware = Hardware(total_vram_mib=4096)
+        entries = [_entry("Qwen3-4B-Instruct", 2120, 147456, rank=10,
+                          quant="Q4_K_M")]
+        config = PlannerConfig(embedder_backends=("llamacpp",))
+        result = plan_for_hardware(hardware, entries, config)
+        assert result.viable is True
+        assert result.budget is not None
+        total = (result.budget.used_mib + result.budget.reserve_mib
+                 + result.budget.headroom_mib)
+        assert total <= hardware.total_vram_mib
 
     def test_a_12gb_card_is_accepted(self):
         hardware = Hardware(total_vram_mib=RTX_3060_12GB)
@@ -255,8 +275,17 @@ class TestContextFloor:
         assert result.candidate.n_ctx_slot >= CONTEXT_FLOOR_SLOT
 
     def test_degraded_mode_is_opt_in(self):
-        hardware = Hardware(total_vram_mib=4096)
-        entries = [_entry("Qwen3-4B-Instruct", 2120, 147456, rank=10)]
+        """A card that cannot reach the floor is refused unless the
+        caller asks for a degraded service.
+
+        On a 3 GB card the catalogue's smallest model fits, but with
+        7168 tokens per slot - below the floor of 12 288. The strict
+        plan refuses it; the degraded plan starts it and says out loud
+        that fact extraction will not work.
+        """
+        hardware = Hardware(total_vram_mib=3072)
+        entries = [_entry("Qwen3-4B-Instruct", 1597, 147456, rank=10,
+                          quant="IQ3_XXS")]
         config = PlannerConfig(embedder_backends=("llamacpp",))
         strict = plan_for_hardware(hardware, entries, config)
         assert strict.viable is False
@@ -269,11 +298,14 @@ class TestContextFloor:
         assert degraded.diagnostics["warning"]
 
     def test_rejection_diagnostics_name_the_shortfall(self):
-        hardware = Hardware(total_vram_mib=4096)
-        entries = [_entry("Qwen3-4B-Instruct", 2120, 147456, rank=10)]
+        hardware = Hardware(total_vram_mib=3072)
+        entries = [_entry("Qwen3-4B-Instruct", 1597, 147456, rank=10,
+                          quant="IQ3_XXS")]
         result = plan_for_hardware(
             hardware, entries, PlannerConfig(embedder_backends=("llamacpp",)))
-        assert result.diagnostics["available_mib"] == 4096
+        assert result.viable is False
+        assert result.diagnostics["reason"] == "context_floor_not_met"
+        assert result.diagnostics["available_mib"] == 3072
         assert result.diagnostics["shortfall_mib"] > 0
         assert result.diagnostics["options"]
 
@@ -573,6 +605,75 @@ class TestKvUnifiedSemantics:
         assert round_to_kv_block(256) == 256
         assert round_to_kv_block(257) == 512
         assert round_to_kv_block(0) == 0
+
+
+class TestComputeBuffer:
+    """The compute buffer grows with the context.
+
+    Measured on an RTX 3060 with llama.cpp 0.7.0-dev (build 11798):
+
+    ==================  ==========
+    ``n_ctx``           Measured
+    ==================  ==========
+    54 784              331.79 MiB
+    61 696              365.54 MiB
+    67 072              391.79 MiB
+    ==================  ==========
+
+    The three points lie on a straight line, and the formula
+    reproduces every one of them.
+    """
+
+    #: The measurements, as (context, MiB).
+    MEASURED = [
+        (54784, 331.79),
+        (61696, 365.54),
+        (67072, 391.79),
+    ]
+
+    def test_the_formula_reproduces_every_measurement(self):
+        for n_ctx, measured in self.MEASURED:
+            computed = compute_buffer_mib(n_ctx, 9086)
+            assert computed == pytest.approx(measured, abs=0.05)
+
+    def test_the_buffer_grows_with_the_context(self):
+        assert (compute_buffer_mib(67072, 9086)
+                > compute_buffer_mib(54784, 9086))
+
+    def test_a_small_model_uses_the_formula_too(self):
+        """The formula is not limited to the 9B. The 4B at a small
+        context measured 116.09 MiB, and the line gives 144.29 at
+        16 384 tokens - the same order of magnitude.
+
+        Only a model below 2000 MiB uses the constant, because there
+        the difference does not matter.
+        """
+        assert compute_buffer_mib(16384, 2497) > 120
+        assert compute_buffer_mib(16384, 2497) < 200
+        # Below the threshold it is a constant.
+        assert compute_buffer_mib(16384, 1597) == compute_buffer_mib(
+            12288, 1597)
+
+    def test_the_planner_uses_the_formula(self):
+        """The plan has to budget the buffer of the context it actually
+        chooses, not a constant."""
+        from cpt_mem0.planner import evaluate_candidate
+
+        hardware = Hardware(total_vram_mib=12288)
+        candidate = evaluate_candidate(
+            model_id="Qwen3.5-9B",
+            quantisation="Q8_0",
+            file_name="m.gguf",
+            file_size_mib=9086,
+            kv_bytes_per_token=32768,
+            cache_type="q8_0",
+            hardware=hardware,
+            config=PlannerConfig(),
+            recurrent_state_mib=100.5,
+        )
+        assert candidate is not None
+        assert candidate.compute_mib == pytest.approx(
+            compute_buffer_mib(candidate.n_ctx, 9086), abs=1.0)
 
 
 class TestRecurrentState:

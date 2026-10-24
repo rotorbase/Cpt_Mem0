@@ -312,9 +312,9 @@ slot, chat model at `Q4_K_M`, KV `q8_0`):
 
 | Card | 9B chat + 4B extraction | 9B chat alone |
 |---|---|---|
-| 12 GB | 58 112 (58 112/slot) | 61 696 (61 696/slot) |
-| 8 GB | does not fit | 49 408 (49 408/slot) |
-| 6 GB | does not fit | 30 976 (30 976/slot) |
+| 12 GB | 58 112 (58 112/slot) | 62 976 (62 976/slot) |
+| 8 GB | does not fit | 17 920 (17 920/slot) |
+| 6 GB | does not fit | 39 168 (39 168/slot) |
 
 Splitting makes the 8 GB and 6 GB tiers impossible: a second
 llama-server needs its own context, its own compute buffer and - for a
@@ -340,10 +340,10 @@ enforced). Regenerate with `scripts/regenerate_tiers.py`:
 
 | VRAM | Selected configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B Q8_0 | 61 696 | 61 696 |
-| 8 GB | Qwen3.5-9B Q4_K_M | 49 408 | 49 408 |
-| 6 GB | Qwen3.5-9B IQ3_XXS | 30 976 | 30 976 |
-| 5 GB | Qwen3-4B-Instruct-2507 Q4_K_M | 13 824 | 13 824 |
+| 12 GB | Qwen3.5-9B Q8_0 | 62 976 | 62 976 |
+| 8 GB | Qwen3.5-9B Q5_K_M | 17 920 | 17 920 |
+| 6 GB | Qwen3.5-9B IQ3_XXS | 39 168 | 39 168 |
+| 5 GB | Qwen3-4B-Instruct-2507 Q5_K_M | 13 056 | 13 056 |
 | 4 GB | Qwen3-4B-Instruct-2507 IQ3_XXS | 15 104 | 15 104 |
 
 The tiers are monotonic: more VRAM yields a better model, not merely a
@@ -432,25 +432,72 @@ The same rule that applies to the KV constants applies here: a number
 that was not measured is not used.
 
 **Why it matters.** With the state and the compute buffer counted, the
-12 GB tier changed from 67 072 tokens to 61 696. The earlier plan
+12 GB tier changed from 67 072 tokens to 62 976. The earlier plan
 claimed 12 287 of 12 288 MiB; the measured reality needed 12 448. The
 difference was exactly the two terms that were missing.
 
 ### 4.12 The compute buffer grows with the context
 
 The CUDA scratch buffer holds the activations of the batch, so it
-grows with the context:
+grows with the context. Three measurements of the same model:
 
 | Model | Context | Measured |
 |---|---|---|
-| Qwen3-4B-Instruct-Q4_K_M | 16 384 | 116.09 MiB |
+| Qwen3.5-9B-Q8_0 | 54 784 | 331.79 MiB |
+| Qwen3.5-9B-Q8_0 | 61 696 | 365.54 MiB |
 | Qwen3.5-9B-Q8_0 | 67 072 | 391.79 MiB |
 
-The planner used a constant of 290 MiB, taken from an earlier run at a
-smaller context. At the context the planner now chooses, the 9B needs
-392 MiB.
+The three points lie on a straight line:
+
+    compute = 0.00488281 * n_ctx + 64.29
+
+which reproduces every measurement to within 0.01 MiB. The planner
+uses the formula, so the context and the buffer are solved together:
+the buffer depends on the context, and the context depends on the
+buffer. The planner iterates until both settle.
+
+A constant was wrong at every context but one. The first version used
+290 MiB, taken from an earlier run at a smaller context, and the 12 GB
+card was 160 MiB too optimistic as a result.
+
+This also freed the 4 GB tier. With the buffer planned at a constant
+of 392 MiB, that card missed the context floor by 253 MiB and was
+refused. With the formula it needs 130 MiB at its own context, and the
+tier works: 15 104 tokens per slot, 4078 of 4096 MiB used.
 
 ### 4.13 The cascade order
+
+Two questions the cascade has to answer: which model, and which
+quantisation. The rule is that the better model wins, and within a
+model the better quantisation wins - but only if the result is
+viable, that is, if it clears the context floor.
+
+That leaves a case the rule does not settle: several quantisations of
+the same model are viable, and they give very different contexts. On
+an 8 GB card:
+
+| Quantisation | File | Context |
+|---|---|---|
+| Q5_K_M | 6273 MiB | 17 920 |
+| Q4_K_M | 5417 MiB | 53 504 |
+| IQ4_XS | 4929 MiB | 73 728 |
+| IQ3_XXS | 3830 MiB | 119 296 |
+
+The cascade takes Q5_K_M, because the quantisation order puts it
+first and it clears the floor. The alternative would give three times
+the context for a slightly coarser quantisation.
+
+Which of the two a user wants is not a technical question - a larger
+context and a better quantisation are both good, and they cost each
+other. The rule follows the same principle as the model hierarchy: the
+better model wins, and the context is what is left over. A user who
+wants the other trade can ask for the quantisation by name.
+
+**Open:** whether the cascade should prefer the larger context over
+the better quantisation when both are viable. It is a policy
+decision, not a correctness one - every configuration the planner
+returns is viable.
+
 The cache type is degraded **last**, not first. The cascade tries every
 model at `q8_0`, then every model at `f16`, then every model at `q4_0`.
 
@@ -754,10 +801,10 @@ With the floors enforced, the viable card tiers are:
 
 | Card | Viable | Notes |
 |---|---|---|
-| 12 GB | ✅ Qwen3.5-9B Q8_0, n_ctx 61 696 | comfortable |
-| 8 GB | ✅ Qwen3.5-9B Q4_K_M, n_ctx 49 408 | |
-| 6 GB | ✅ Qwen3.5-9B IQ3_XXS, n_ctx 30 976 | coarse quantisation |
-| 5 GB | ✅ Qwen3-4B-Instruct-2507 Q4_K_M, n_ctx 13 824 | |
+| 12 GB | ✅ Qwen3.5-9B Q8_0, n_ctx 62 976 | comfortable |
+| 8 GB | ✅ Qwen3.5-9B Q5_K_M, n_ctx 17 920 | |
+| 6 GB | ✅ Qwen3.5-9B IQ3_XXS, n_ctx 39 168 | coarse quantisation |
+| 5 GB | ✅ Qwen3-4B-Instruct-2507 Q5_K_M, n_ctx 13 056 | |
 | 4 GB | ✅ Qwen3-4B-Instruct-2507 IQ3_XXS, n_ctx 15 104 | fits, but at `IQ3_XXS` |
 
 At 4 GB the smallest configuration that reaches the context floor needs:
@@ -795,9 +842,9 @@ was evaluated and rejected on measurement.
 
 | Card | 9B chat + 4B extraction | 9B chat alone |
 |---|---|---|
-| 12 GB | 58 112 (58 112/slot) | **61 696 (61 696/slot)** |
-| 8 GB | does not fit | **49 408 (49 408/slot)** |
-| 6 GB | does not fit | **30 976 (30 976/slot)** |
+| 12 GB | 58 112 (58 112/slot) | **62 976 (62 976/slot)** |
+| 8 GB | does not fit | **17 920 (17 920/slot)** |
+| 6 GB | does not fit | **39 168 (39 168/slot)** |
 | 5 GB | does not fit | does not fit |
 | 4 GB | does not fit | does not fit |
 
@@ -919,7 +966,7 @@ cpt-mem0 migrate --from pgvector
 GPU     RTX 3060                          12288 MiB total
 LLM     Qwen3.5-9B Q8_0                   9086 MiB
         weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
-        n_ctx 61696  (61696 per slot, 2 slots)
+        n_ctx 62976  (62976 per slot, 2 slots)
         --fit off  --flash-attn on  --reasoning-format none  --kv-unified
         recurrent state     100 MiB (hybrid model, fixed)
         ranking basis: unmeasured

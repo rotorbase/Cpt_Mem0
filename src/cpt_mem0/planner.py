@@ -38,17 +38,25 @@ HOST_FRACTION = 0.11          # share of the model file that stays in host RAM
 #: activations for the whole batch. Measured on an RTX 3060 with
 #: llama.cpp 0.7.0-dev (build 11798):
 #:
-#: ============================  ==================  ==========
+#: ============================  ==================  =============
 #: Model                        Context             Measured
-#: ============================  ==================  ==========
-#: Qwen3-4B-Instruct-Q4_K_M      16 384              116.09 MiB
+#: ============================  ==================  =============
+#: Qwen3.5-9B-Q8_0               54 784              331.79 MiB
+#: Qwen3.5-9B-Q8_0               61 696              365.54 MiB
 #: Qwen3.5-9B-Q8_0               67 072              391.79 MiB
-#: ============================  ==================  ==========
+#: Qwen3-4B-Instruct-Q4_K_M      16 384              116.09 MiB
+#: ============================  ==================  =============
 #:
-#: The old value of 290 MiB was taken from an earlier run at a smaller
-#: context. At the context this planner now chooses, the 9B needs
-#: 392 MiB - the difference is what made the plan 160 MiB too
-#: optimistic on a 12 GB card.
+#: For the 9B the three points lie on a straight line:
+#:
+#:     compute = 0.00488281 * n_ctx + 64.29
+#:
+#: It reproduces all three measurements to within 0.01 MiB. A constant
+#: would have been wrong at every context but one - the first version
+#: of the planner used 290 MiB, taken from a run at a smaller context,
+#: and the 12 GB card was 160 MiB too optimistic as a result.
+COMPUTE_SLOPE = 0.00488281    # MiB per token
+COMPUTE_INTERCEPT = 64.29     # MiB
 COMPUTE_MIB = 392             # CUDA scratch buffer, 9B class
 COMPUTE_MIB_SMALL = 130       # CUDA scratch buffer, small model
 CUDA_CTX_MIB = 320            # CUDA context, per llama-server process
@@ -164,7 +172,7 @@ class Candidate:
     parallel: int
     embedder_backend: str            # "llamacpp" or "fastembed"
     kv_vram_mib: float
-    compute_mib: int
+    compute_mib: float
     cuda_context_mib: int
     total_vram_mib: float
     model_rank_basis: str = "unmeasured"
@@ -228,7 +236,7 @@ class Budget:
 
     total_mib: float
     weights_mib: float
-    compute_mib: int
+    compute_mib: float
     cuda_context_mib: int
     embedder_mib: int
     reserve_mib: int
@@ -262,6 +270,23 @@ class PlanResult:
         return self.diagnostics.get("reason", "")
 
 
+def compute_buffer_mib(n_ctx: int, file_size_mib: float) -> float:
+    """The CUDA scratch buffer for a given context.
+
+    It grows with the context, because it holds the activations of the
+    whole batch. For the 9B the measurements lie on a straight line:
+
+        compute = 0.00488281 * n_ctx + 64.29
+
+    which reproduces all three measured points to within 0.01 MiB. The
+    small models use a constant - their own measurements are all at a
+    small context, and the difference does not matter there.
+    """
+    if file_size_mib <= 2000:
+        return float(COMPUTE_MIB_SMALL)
+    return COMPUTE_SLOPE * n_ctx + COMPUTE_INTERCEPT
+
+
 def embedder_cost_mib(backend: str) -> int:
     """VRAM cost of the embedder.
 
@@ -281,7 +306,7 @@ def _budget(
     *,
     total_mib: float,
     weights_mib: float,
-    compute_mib: int,
+    compute_mib: float,
     cuda_context_mib: int,
     embedder_mib: int,
     reserve_mib: int,
@@ -331,41 +356,55 @@ def evaluate_candidate(
     headroom = config.headroom_for(hardware.total_vram_mib)
 
     weights = file_size_mib * (1.0 - HOST_FRACTION)
-    compute = COMPUTE_MIB if file_size_mib > 2000 else COMPUTE_MIB_SMALL
     cuda_ctx = CUDA_CTX_MIB
     emb = embedder_cost_mib(embedder_backend)
-
-    fixed = (weights + compute + cuda_ctx + emb + recurrent_state_mib
-             + reserve + headroom)
-    remaining = hardware.total_vram_mib - fixed
-    if remaining <= 0:
-        return None
 
     bytes_per_token = kv_bytes_for_cache(kv_bytes_per_token, cache_type)
     if bytes_per_token <= 0:
         return None
     mib_per_token = bytes_per_token / (1024 * 1024)
 
-    # How the KV cache is laid out decides what ``-c`` means.
+    # The compute buffer depends on the context, and the context
+    # depends on the compute buffer. The two are solved together.
     #
-    # With ``--kv-unified`` the pool is shared: it holds ``pool_tokens``
-    # tokens in total and every slot can use up to that much. The
-    # ``-c`` flag is that per-slot limit.
-    #
-    # Without it, every slot gets its own pool of ``n_ctx`` tokens, so
-    # the total is ``slots × n_ctx`` and ``-c`` is that total.
-    if KV_UNIFIED:
-        pool_tokens = int(remaining / mib_per_token)
-        # The server rounds the context up to a multiple of 256. Round
-        # down here so the planned value is one the server will use
-        # exactly, and so the VRAM is not exceeded.
-        pool_tokens = (pool_tokens // KV_BLOCK_TOKENS) * KV_BLOCK_TOKENS
-        n_ctx = pool_tokens
+    # The first pass uses the buffer for a context of zero; every
+    # further pass uses the context the previous pass found. It
+    # converges after three or four rounds, because the buffer grows
+    # much slower than the context shrinks.
+    fixed_without_compute = (weights + cuda_ctx + emb
+                              + recurrent_state_mib + reserve + headroom)
+    compute = compute_buffer_mib(0, file_size_mib)
+    n_ctx = 0
+    for _ in range(8):
+        remaining = hardware.total_vram_mib - fixed_without_compute - compute
+        if remaining <= 0:
+            return None
+        if KV_UNIFIED:
+            pool_tokens = int(remaining / mib_per_token)
+            # The server rounds the context up to a multiple of 256.
+            # Round down here so the planned value is one the server
+            # will use exactly, and so the VRAM is not exceeded.
+            pool_tokens = (pool_tokens // KV_BLOCK_TOKENS) * KV_BLOCK_TOKENS
+            new_ctx = pool_tokens
+        else:
+            pool_tokens = int(remaining / mib_per_token)
+            new_ctx = (pool_tokens // parallel) * parallel
+        if new_ctx <= 0:
+            return None
+        new_compute = compute_buffer_mib(new_ctx, file_size_mib)
+        if new_ctx == n_ctx and abs(new_compute - compute) < 0.5:
+            compute = new_compute
+            n_ctx = new_ctx
+            break
+        n_ctx = new_ctx
+        compute = new_compute
     else:
-        pool_tokens = int(remaining / mib_per_token)
-        n_ctx = (pool_tokens // parallel) * parallel
-    if n_ctx <= 0:
-        return None
+        # It did not settle. The last values are close enough to plan
+        # with, and the check below refuses a configuration that does
+        # not fit.
+        pass
+
+    pool_tokens = n_ctx if KV_UNIFIED else n_ctx // parallel
 
     # The context floor applies to a single slot: the extraction prompt
     # needs about 10 500 tokens in one slot.
@@ -642,6 +681,32 @@ def plan_for_hardware(
             },
         )
 
+    if config.allow_degraded:
+        # Not even the smallest candidate fits. The caller asked for a
+        # degraded service, so the planner builds the smallest one the
+        # card can hold - with whatever context is left over.
+        smallest = _smallest_fitting_candidate(
+            hardware, ordered, config)
+        if smallest is not None:
+            candidate, budget = smallest
+            return PlanResult(
+                viable=True,
+                candidate=candidate,
+                budget=budget,
+                diagnostics={
+                    "reason": "context_floor_not_met",
+                    "degraded": True,
+                    "warning": (
+                        "The card cannot hold this model with a usable "
+                        "context. The configuration below is the smallest "
+                        "one that fits at all; fact extraction will not "
+                        "work."
+                    ),
+                    "required_mib": round(candidate.total_vram_mib),
+                    "detail": rejection,
+                },
+            )
+
     detail = next(iter(rejection.values()), {})
     required_mib = cheapest_to_floor or 0
     options = [
@@ -657,6 +722,23 @@ def plan_for_hardware(
             "constant for architectures without a closed form: "
             + ", ".join(sorted(calibration_required))
         )
+
+    # The shortfall is the distance between the card and the cheapest
+    # path to the floor. If the model does not fit at all, the distance
+    # is the size of the model itself.
+    if required_mib <= hardware.total_vram_mib:
+        shortfall = 0
+    else:
+        shortfall = required_mib - hardware.total_vram_mib
+    if shortfall == 0 and cheapest_to_floor:
+        # The floor was missed, not the VRAM. Say how much context the
+        # card actually allows.
+        shortfall = max(
+            shortfall,
+            config.context_floor_slot
+            - max((entry.get("n_ctx_slot", 0)
+                   for entry in rejection.values()), default=0))
+
     return PlanResult(
         viable=False,
         candidate=None,
@@ -665,12 +747,53 @@ def plan_for_hardware(
             "reason": "context_floor_not_met",
             "required_mib": required_mib,
             "available_mib": hardware.total_vram_mib,
-            "shortfall_mib": max(0, required_mib - hardware.total_vram_mib),
+            "shortfall_mib": shortfall,
             "detail": detail,
             "calibration_required": calibration_required,
             "options": options,
         },
     )
+
+
+def _smallest_fitting_candidate(hardware: Hardware, entries: list,
+                                config: PlannerConfig
+                                ) -> tuple[Candidate, Budget] | None:
+    """The smallest configuration the card can hold at all.
+
+    This is what the degraded mode falls back to when not even the
+    cheapest model fits with a usable context: the model with the
+    smallest file, the coarsest cache type, and whatever context is
+    left over.
+
+    The context can be zero here. The service would start and would
+    not be able to extract anything - which is exactly what the
+    degraded mode says out loud.
+    """
+    best: tuple[Candidate, Budget] | None = None
+    for entry in entries:
+        for quant in _sorted_quantisations(entry):
+            if getattr(quant, "kv_bytes_per_token", None) is None:
+                continue
+            candidate = evaluate_candidate(
+                model_id=entry.model_id,
+                quantisation=quant.name,
+                file_name=quant.file_name,
+                file_size_mib=quant.file_size_mib,
+                kv_bytes_per_token=quant.kv_bytes_per_token,
+                cache_type=config.cache_type_order[-1],
+                hardware=hardware,
+                config=config,
+                embedder_backend=config.embedder_backends[-1],
+                recurrent_state_mib=float(
+                    getattr(entry, "recurrent_state_mib", 0.0) or 0.0),
+            )
+            if candidate is None:
+                continue
+            budget = _recompute_budget(candidate, hardware, config)
+            if best is None or candidate.total_vram_mib < best[0].total_vram_mib:
+                best = (candidate, budget)
+            break
+    return best
 
 
 def _required_mib_for_floor(candidate: Candidate, hardware: Hardware,

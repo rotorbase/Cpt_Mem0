@@ -470,6 +470,36 @@ measured catalogue value, and a hybrid model without one is not
 plannable - the planner asks for a calibration run instead of
 guessing.
 
+**The compute buffer grows with the context, and it is a line.**
+
+Three measurements of the same model at three contexts:
+
+| `n_ctx` | compute buffer |
+|---|---|
+| 54 784 | 331.79 MiB |
+| 61 696 | 365.54 MiB |
+| 67 072 | 391.79 MiB |
+
+The three points lie on a straight line:
+
+    compute = 0.00488281 * n_ctx + 64.29
+
+It reproduces every measurement to within 0.01 MiB. The planner uses
+the formula, which means the context and the buffer have to be solved
+together - the buffer depends on the context, and the context depends
+on the buffer. The planner iterates; it settles after three or four
+rounds.
+
+**The 4 GB tier was rejected because of this.** With the buffer planned
+as a constant of 392 MiB - a value measured at a context of 67 072 -
+the 4 GB card missed the context floor by 253 MiB and was refused. With
+the formula it needs 130 MiB at its own context, and the tier works:
+15 104 tokens per slot, 4078 of 4096 MiB used.
+
+**The embedder has no KV cache.** The nomic embedder is a pure
+encoder; llama.cpp allocates no KV state for it. The plan counted
+12 MiB that do not exist.
+
 **One VRAM reading is a moment, not the allocation.**
 
 The measurement took a single `nvidia-smi` sample while the server was
@@ -545,10 +575,10 @@ quantisation, then best KV cache type. Embedder on GPU, 2 slots:
 
 | VRAM | Configuration | `n_ctx` | Per slot |
 |---|---|---|---|
-| 12 GB | Qwen3.5-9B-Q8_0 | 61 696 | 61 696 |
-| 8 GB | Qwen3.5-9B-Q4_K_M | 49 408 | 49 408 |
-| 6 GB | Qwen3.5-9B-IQ3_XXS | 30 976 | 30 976 |
-| 5 GB | Qwen3-4B-Instruct-2507-Q4_K_M | 13 824 | 13 824 |
+| 12 GB | Qwen3.5-9B-Q8_0 | 62 976 | 62 976 |
+| 8 GB | Qwen3.5-9B-Q5_K_M | 17 920 | 17 920 |
+| 6 GB | Qwen3.5-9B-IQ3_XXS | 39 168 | 39 168 |
+| 5 GB | Qwen3-4B-Instruct-2507-Q5_K_M | 13 056 | 13 056 |
 | 4 GB | Qwen3-4B-Instruct-2507-IQ3_XXS | 15 104 | 15 104 |
 
 The hierarchy is monotonic: more VRAM yields a better model, not merely
