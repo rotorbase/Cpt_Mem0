@@ -86,6 +86,10 @@ $ pytest
 49 passed
 ```
 
+There is a second suite that does need a free card — it starts one
+`llama-server` with the planned flags and compares the allocation
+against the prediction. See [docs/testing.md](docs/testing.md).
+
 See [SPEC.md](SPEC.md) for the full design and the open questions.
 
 ## Documents
@@ -96,6 +100,7 @@ See [SPEC.md](SPEC.md) for the full design and the open questions.
 | [docs/verification.md](docs/verification.md) | Every measurement behind the spec's numbers |
 | [docs/catalogue.md](docs/catalogue.md) | Model catalogue, file sizes, KV constants, resulting selections |
 | [docs/api.md](docs/api.md) | CLI, HTTP and MCP contracts |
+| [docs/testing.md](docs/testing.md) | How to run the tests, and what needs a free GPU |
 
 ## Key findings
 
