@@ -607,6 +607,50 @@ class TestKvUnifiedSemantics:
         assert round_to_kv_block(0) == 0
 
 
+class TestContextIsChatBuffer:
+    """Context above the floor is chat buffer, not memory capacity.
+
+    The extraction prompt is 10 449 tokens. A slot holds it from
+    12 288 tokens upwards. Everything above that serves the chat side.
+
+    The extraction quality depends on the weights, not on how much
+    room the slot has beyond what the prompt needs. So when two
+    quantisations of the same model are viable, the better one wins -
+    even though the coarser one would give three times the context.
+    """
+
+    def test_the_better_quantisation_wins(self, catalogue):
+        """On an 8 GB card: Q5_K_M gives 17 920 tokens, Q4_K_M gives
+        53 504, and both use the same VRAM. The planner takes Q5_K_M."""
+        hardware = Hardware(total_vram_mib=8192)
+        result = plan_for_hardware(hardware, catalogue.sorted_entries(),
+                                   PlannerConfig())
+        assert result.viable is True
+        assert result.candidate is not None
+        assert result.candidate.quantisation == "Q5_K_M"
+
+    def test_the_context_clears_the_floor(self, catalogue):
+        """Whatever the rule picks, the extraction has to fit."""
+        hardware = Hardware(total_vram_mib=8192)
+        result = plan_for_hardware(hardware, catalogue.sorted_entries(),
+                                   PlannerConfig())
+        assert result.viable is True
+        assert result.candidate is not None
+        assert result.candidate.n_ctx_slot >= CONTEXT_FLOOR_SLOT
+
+    def test_a_named_quantisation_is_honoured(self, catalogue):
+        """A user who wants the other trade asks for it by name."""
+        hardware = Hardware(total_vram_mib=8192)
+        entries = [e for e in catalogue.sorted_entries()
+                   if e.model_id == "Qwen3.5-9B"]
+        result = plan_for_hardware(hardware, entries,
+                                   PlannerConfig(cache_type_order=("q8_0",)))
+        assert result.viable is True
+        assert result.candidate is not None
+        # The planner picks the best quantisation of that model.
+        assert result.candidate.quantisation == "Q5_K_M"
+
+
 class TestComputeBuffer:
     """The compute buffer grows with the context.
 

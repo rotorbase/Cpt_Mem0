@@ -476,27 +476,35 @@ That leaves a case the rule does not settle: several quantisations of
 the same model are viable, and they give very different contexts. On
 an 8 GB card:
 
-| Quantisation | File | Context |
-|---|---|---|
-| Q5_K_M | 6273 MiB | 17 920 |
-| Q4_K_M | 5417 MiB | 53 504 |
-| IQ4_XS | 4929 MiB | 73 728 |
-| IQ3_XXS | 3830 MiB | 119 296 |
+| Quantisation | File | Context | VRAM |
+|---|---|---|---|
+| Q5_K_M | 6273 MiB | 17 920 | 6877 MiB |
+| Q4_K_M | 5417 MiB | 53 504 | 6880 MiB |
+| IQ4_XS | 4929 MiB | 73 728 | 6880 MiB |
+| IQ3_XXS | 3830 MiB | 119 296 | 6881 MiB |
 
-The cascade takes Q5_K_M, because the quantisation order puts it
-first and it clears the floor. The alternative would give three times
-the context for a slightly coarser quantisation.
+All four use the same VRAM. The difference is how much of it sits in
+the KV cache instead of in the weights. The choice is therefore
+between better weights and more context - the same VRAM either way.
 
-Which of the two a user wants is not a technical question - a larger
-context and a better quantisation are both good, and they cost each
-other. The rule follows the same principle as the model hierarchy: the
-better model wins, and the context is what is left over. A user who
-wants the other trade can ask for the quantisation by name.
+**Context above the floor is chat buffer, not memory capacity.**
 
-**Open:** whether the cascade should prefer the larger context over
-the better quantisation when both are viable. It is a policy
-decision, not a correctness one - every configuration the planner
-returns is viable.
+The extraction prompt is 10 449 tokens. A slot holds it from 12 288
+tokens upwards. Everything above that serves the chat side.
+
+The extraction quality depends on the weights, not on how much room
+the slot has beyond what the prompt needs. A slot with 17 920 tokens
+extracts exactly as well as one with 119 296, because the prompt is
+the same size either way.
+
+So the cascade takes Q5_K_M: the better quantisation, and the context
+that is left over. This is the same principle as the model hierarchy
+- the better model wins, and the context is what is left over. A user
+who wants the other trade asks for the quantisation by name.
+
+**Resolved:** the better quantisation wins. The context is not a
+quality dimension above the floor, so it does not compete with the
+weights.
 
 The cache type is degraded **last**, not first. The cascade tries every
 model at `q8_0`, then every model at `f16`, then every model at `q4_0`.
@@ -1137,6 +1145,7 @@ None of these are vendored into the source repository.
 | 4 | Multi-process store access | **Not needed.** Qdrant embedded forbids it (§3.1); the daemon owns the store and serves all clients. A Qdrant server mode remains an escape hatch, not a feature. |
 | 5 | The 4–5 GB tier | **Refuse by default, allow explicit opt-in.** The planner rejects any configuration below the context floor and reports the shortfall. `planner.allow_degraded: true` overrides it with a loud warning in `plan`, in `status` and in the daemon log. The refusal is the default because a service that silently stores nothing is worse than one that does not start. See §17.3. |
 | 6 | Chat vs. extraction weighting | **No separate weighting. One ranking, and it is not parameter count.** Measured extraction quality (§17.4) inverts the assumed order: the 2B model extracts better than the 9B. The catalogue therefore ranks by **measured extraction capability**, with chat quality as a tiebreaker. |
+| 7 | Context above the floor | **Chat buffer, not memory capacity.** The extraction prompt is 10 449 tokens; a slot holds it from 12 288 tokens upwards. Everything above that serves the chat side, and the extraction quality depends on the weights, not on the room left over. So when two quantisations of the same model are viable, the better one wins even if the coarser one would give three times the context - both use the same VRAM. See §4.13. |
 
 ### 17.2 Still open
 
