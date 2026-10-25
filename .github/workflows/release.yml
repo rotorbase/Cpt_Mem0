@@ -15,6 +15,12 @@ name: Release
 on:
   release:
     types: [published]
+  # A tag builds the package too. The release page is where the
+  # download belongs, but a fix that comes after the release was
+  # published has to reach it somehow - and a new tag is the way.
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
@@ -95,9 +101,16 @@ jobs:
           retention-days: 30
 
       - name: Attach it to the release
-        if: github.event_name == 'release'
         shell: pwsh
         run: |
+          # The release may not exist yet - a tag that was pushed
+          # without a release gets one here.
+          if (-not (gh release view $env:GITHUB_REF_NAME 2>$null)) {
+            Write-Host "creating the release $env:GITHUB_REF_NAME"
+            gh release create $env:GITHUB_REF_NAME --generate-notes `
+              --title $env:GITHUB_REF_NAME
+          }
+
           $assets = Get-ChildItem "dist\Cpt_Mem0-*-windows-x64.zip"
           foreach ($asset in $assets) {
             Write-Host "attaching $($asset.Name)"
