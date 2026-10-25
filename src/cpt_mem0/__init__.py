@@ -8,6 +8,30 @@ constants.
 
 __version__ = "0.1.0"
 
+import os as _os
+
+# mem0's telemetry is off, and it has to be off **before mem0 is
+# imported** - the flag is read once, when the module loads.
+#
+# Two reasons, and the second one is not about privacy:
+#
+# 1. The app promises no outbound requests. With the telemetry on,
+#    mem0 sends events to PostHog.
+#
+# 2. **The telemetry opens a second, global Qdrant client** under
+#    ``~/.mem0/migrations_qdrant``. Qdrant's embedded mode allows one
+#    client per directory, so that path is an exclusive lock. With
+#    the telemetry on, Cpt Mem0 cannot start while **any other mem0
+#    process** on the machine holds it - including the Hermes stack.
+#    The error names a migrations folder and says nothing about the
+#    real cause.
+#
+# The user's own mem0 stack keeps its telemetry as it is. This only
+# changes what this app does - and it is forced, not defaulted. A
+# global MEM0_TELEMETRY=True in the environment would otherwise put
+# the app back into the exclusive lock and send the events out.
+_os.environ["MEM0_TELEMETRY"] = "False"
+
 from .catalogue import (
     Catalogue,
     CatalogueEntry,

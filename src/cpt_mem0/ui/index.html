@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cpt Mem0</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+
+<!-- Die Kopfzeile: Status, VRAM, der grosse Schalter -->
+<header class="bar">
+  <div class="brand">
+    <span class="logo">CPT<em>MEM0</em></span>
+    <span class="build" id="build">–</span>
+  </div>
+
+  <div class="meters">
+    <div class="meter">
+      <span class="meter-label">VRAM</span>
+      <span class="meter-value" id="vram">–</span>
+      <div class="meter-bar"><span id="vram-bar"></span></div>
+    </div>
+    <div class="meter">
+      <span class="meter-label">FAKTEN</span>
+      <span class="meter-value" id="memories">–</span>
+    </div>
+    <div class="meter">
+      <span class="meter-label">MODELLE</span>
+      <span class="meter-value" id="models">–</span>
+    </div>
+  </div>
+
+  <button class="power" id="power" title="Modelle ein- und ausschalten">
+    <span class="power-ring"></span>
+    <span class="power-label">AUS</span>
+  </button>
+</header>
+
+<!-- Die Themen-Tasten: wie ein Equalizer -->
+<nav class="topics" id="topics"></nav>
+
+<!-- Die Chat-Zeile -->
+<main class="chat">
+  <div class="messages" id="messages"></div>
+
+  <form class="composer" id="composer">
+    <input type="text" id="input" autocomplete="off" spellcheck="false"
+           placeholder="Sag etwas – es wird gemerkt.">
+    <button type="submit" class="send" title="Senden">↵</button>
+  </form>
+
+  <div class="statusline" id="statusline"></div>
+</main>
+
+<!-- Die Einstellungen -->
+<footer class="settings">
+  <div class="setting">
+    <label for="model">Modell</label>
+    <select id="model"></select>
+  </div>
+
+  <div class="setting switch">
+    <label for="autostart">Autostart (Windows)</label>
+    <button type="button" class="toggle" id="autostart" role="switch"
+            aria-checked="false"><span></span></button>
+  </div>
+
+  <div class="setting switch">
+    <label for="voice">Sprachausgabe</label>
+    <button type="button" class="toggle" id="voice" role="switch"
+            aria-checked="false"><span></span></button>
+  </div>
+
+  <div class="setting switch">
+    <label for="theme">Winamp-Look</label>
+    <button type="button" class="toggle" id="theme" role="switch"
+            aria-checked="true"><span></span></button>
+  </div>
+
+  <div class="setting">
+    <label for="cluster-count">Themen</label>
+    <input type="range" id="cluster-count" min="3" max="6" value="5">
+    <span id="cluster-value">5</span>
+  </div>
+
+  <div class="setting">
+    <span class="label">Alles löschen</span>
+    <button type="button" class="danger" id="wipe">Store leeren</button>
+  </div>
+</footer>
+
+<script src="/ui/app.js"></script>
+</body>
+</html>

@@ -1210,6 +1210,53 @@ None of these are vendored into the source repository.
 
 ---
 
+## 16a. The window
+
+The window is served by the daemon at the same address as the API. It
+is a **client**: the store has an exclusive lock, and the daemon is the
+only one that may hold it.
+
+**Why a browser.** One code base for every system. The window is
+three files - HTML, CSS, JavaScript - with no build step and no
+runtime to ship. A native window later is a Tauri wrapper around the
+same code.
+
+**The switch.** The models are child processes, the store lives in the
+daemon. So the switch stops the children and the VRAM is free while
+the memory stays reachable. The search and the write refuse while the
+models are off, with a message that says so. Nothing restarts the
+models on its own - the watcher leaves a suspended runtime alone.
+
+**The topic buttons.** Three to six, filled from the store.
+
+- The facts come from `get_all` with an explicitly high `top_k`. The
+  mem0 default is 20, and the rest would be unfindable.
+- The grouping comes from the vectors that are already in Qdrant.
+  Asking the embedder again would cost a round trip per memory and
+  might produce a different geometry than the one the vectors were
+  written with.
+- The grouping is k-means over the cosine similarity. The start
+  configuration is the vectors that are farthest from each other, so
+  the result is the same on every reload.
+- The names come from the local LLM: two or three words per group.
+  Without the LLM the first fact of the group stays as the name.
+- The colours are spread over the hue circle with the same lightness.
+
+**The telemetry.** mem0's telemetry is off, and it has to be off
+before mem0 is imported - the flag is read once, when the module
+loads.
+
+1. The app promises no outbound requests. With the telemetry on,
+   mem0 sends events to PostHog.
+2. The telemetry opens a **second, global Qdrant client** under
+   `~/.mem0/migrations_qdrant`. Qdrant's embedded mode allows one
+   client per directory, so that path is an exclusive lock. With the
+   telemetry on, Cpt Mem0 cannot start while any other mem0 process
+   holds it - including the Hermes stack. The error names a migrations
+   folder and says nothing about the real cause.
+
+The user's own mem0 stack keeps its telemetry as it is.
+
 ## 17. Open questions
 
 ### 17.1 Resolved

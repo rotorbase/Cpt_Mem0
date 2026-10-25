@@ -361,6 +361,47 @@ class Engine:
         """How many memories the store holds."""
         return len(self.all())
 
+    def vectors(self, limit: int = 200) -> list[tuple[str, list[float]]]:
+        """The stored memories with their vectors.
+
+        The UI clusters them into the topic buttons. The vectors come
+        from the vector store itself - they are already there, and
+        asking the embedder again would cost a round trip per memory
+        and might give a different geometry than the one the vectors
+        were written with.
+        """
+        memory = self._require_open()
+        client = getattr(
+            getattr(memory, "vector_store", None), "client", None)
+        if client is None:
+            return []
+
+        collection = self.collection
+        try:
+            points, _ = client.scroll(
+                collection_name=collection,
+                limit=limit,
+                with_payload=True,
+                with_vectors=True,
+            )
+        except Exception:
+            return []
+
+        result: list[tuple[str, list[float]]] = []
+        for point in points:
+            payload = point.payload or {}
+            text = payload.get("data") or payload.get("text") or ""
+            vector = point.vector
+            if not text or vector is None:
+                continue
+            if isinstance(vector, dict):
+                # A named vector: take the first one.
+                vector = next(iter(vector.values()), None)
+            if vector is None:
+                continue
+            result.append((str(text), list(vector)))
+        return result
+
 
 def _as_dict(value: Any) -> dict[str, Any]:
     """A mem0 result as a dictionary."""

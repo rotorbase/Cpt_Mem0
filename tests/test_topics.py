@@ -1,0 +1,154 @@
+"""Tests for the topic clustering.
+
+The UI shows three to six topic buttons, filled from what is in the
+store. The clustering decides what the buttons mean, so it has to
+group the facts by their content and not by their order.
+"""
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+
+from cpt_mem0.topics import (  # noqa: E402
+    Cluster,
+    cluster,
+    kmeans,
+    name_clusters,
+    palette,
+)
+
+
+def _vector(values):
+    """A unit vector from a few numbers."""
+    length = sum(value * value for value in values) ** 0.5
+    return [value / length for value in values]
+
+
+class TestKmeans:
+    def test_it_separates_two_groups(self):
+        """Two groups that point in different directions."""
+        vectors = [
+            _vector([1, 0]), _vector([0.9, 0.1]),
+            _vector([-1, 0]), _vector([-0.9, -0.1]),
+        ]
+        assignment, centres = kmeans(vectors, 2)
+        assert len(centres) == 2
+        assert assignment[0] == assignment[1]
+        assert assignment[2] == assignment[3]
+        assert assignment[0] != assignment[2]
+
+    def test_it_is_deterministic(self):
+        """The same input gives the same clusters - the UI must not
+        shuffle the buttons on every reload."""
+        vectors = [_vector([1, 0]), _vector([0.9, 0.1]),
+                   _vector([0, 1]), _vector([0.1, 0.9])]
+        first = kmeans(vectors, 2)
+        second = kmeans(vectors, 2)
+        assert first[0] == second[0]
+
+    def test_more_clusters_than_vectors(self):
+        assignment, centres = kmeans([_vector([1, 0])], 5)
+        assert len(centres) == 1
+        assert assignment == [0]
+
+    def test_no_vectors(self):
+        assignment, centres = kmeans([], 3)
+        assert assignment == []
+        assert centres == []
+
+    def test_every_vector_gets_a_cluster(self):
+        vectors = [_vector([1, 0]), _vector([0, 1]), _vector([1, 1])]
+        assignment, _ = kmeans(vectors, 3)
+        assert len(assignment) == 3
+        assert all(0 <= group < 3 for group in assignment)
+
+
+class TestCluster:
+    def test_it_groups_by_content(self):
+        entries = [
+            ("The build server has 64 GB of RAM.", _vector([1, 0])),
+            ("The build server runs the tests.", _vector([0.95, 0.05])),
+            ("The coffee machine is automatic.", _vector([0, 1])),
+            ("The coffee machine needs beans.", _vector([0.05, 0.95])),
+        ]
+        clusters = cluster(entries, k=2)
+        assert len(clusters) == 2
+
+        by_size = sorted(clusters, key=lambda c: -c.size)
+        assert by_size[0].size == 2
+
+        # The two build-server facts belong together.
+        groups = [set(c.facts) for c in clusters]
+        assert any({"The build server has 64 GB of RAM.",
+                    "The build server runs the tests."} <= group
+                   for group in groups)
+
+    def test_the_biggest_cluster_is_first(self):
+        """The UI shows the most used topic at the left."""
+        entries = [(f"Fact {index}", _vector([1, 0]))
+                   for index in range(5)]
+        entries.append(("Other", _vector([0, 1])))
+        clusters = cluster(entries, k=2)
+        assert clusters[0].size >= clusters[-1].size
+
+    def test_no_facts(self):
+        assert cluster([], k=5) == []
+
+    def test_every_fact_is_in_a_cluster(self):
+        """Nothing may be lost - a fact that is in no cluster is a
+        fact the user cannot find."""
+        entries = [(f"Fact {index}", _vector([1, index * 0.1]))
+                   for index in range(10)]
+        clusters = cluster(entries, k=3)
+        found = [fact for c in clusters for fact in c.facts]
+        assert sorted(found) == sorted(fact for fact, _ in entries)
+
+
+class TestNaming:
+    def test_the_llm_gives_the_name(self):
+        clusters = [Cluster(label="a long fact", facts=["a long fact"])]
+        name_clusters(clusters, llm=lambda prompt: "Infrastructure")
+        assert clusters[0].label == "Infrastructure"
+
+    def test_without_an_llm_the_fact_stays(self):
+        clusters = [Cluster(label="a long fact", facts=["a long fact"])]
+        name_clusters(clusters, llm=None)
+        assert clusters[0].label == "a long fact"
+
+    def test_a_failing_llm_leaves_the_fact(self):
+        def broken(prompt):
+            raise RuntimeError("the models are suspended")
+
+        clusters = [Cluster(label="a long fact", facts=["a long fact"])]
+        name_clusters(clusters, llm=broken)
+        assert clusters[0].label == "a long fact"
+
+    def test_a_too_long_name_is_refused(self):
+        """A name that is too long is not a name."""
+        clusters = [Cluster(label="short", facts=["short"])]
+        name_clusters(clusters, llm=lambda prompt: "x" * 80)
+        assert clusters[0].label == "short"
+
+    def test_a_quoted_name_is_cleaned(self):
+        clusters = [Cluster(label="short", facts=["short"])]
+        name_clusters(clusters, llm=lambda prompt: '"Infrastructure"')
+        assert clusters[0].label == "Infrastructure"
+
+
+class TestPalette:
+    def test_there_is_a_colour_for_every_cluster(self):
+        colours = palette(5)
+        assert len(colours) == 5
+        assert len(set(colours)) == 5
+
+    def test_no_clusters(self):
+        assert palette(0) == []
+
+    def test_the_colours_are_spread_out(self):
+        """Two buttons next to each other must not have the same
+        colour."""
+        colours = palette(6)
+        hues = [int(colour.split("(")[1].split()[0]) for colour in colours]
+        assert sorted(hues) == [0, 60, 120, 180, 240, 300]

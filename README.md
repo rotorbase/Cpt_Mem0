@@ -46,6 +46,11 @@ that `start` would use.
 - **Runs the store embedded.** Qdrant in-process: no server, no Docker, no
   database daemon.
 - **Stays local.** No telemetry, no outbound requests.
+- **Has a window.** A browser window that the daemon delivers: a big
+  on/off switch for the models, the topic buttons filled from the store,
+  and every memory findable and deletable.
+- **Finds everything.** mem0's `get_all` returns 20 memories by default —
+  the rest are unfindable. The limit is passed explicitly.
 
 ## Install
 
@@ -68,9 +73,29 @@ cpt-mem0 init       # install the pinned llama.cpp build
 cpt-mem0 runtime    # show the installed build
 cpt-mem0 plan       # show the computed configuration
 cpt-mem0 start      # run the daemon (REST + MCP on 127.0.0.1:8765)
+cpt-mem0 ui         # run the daemon and open the window in the browser
+cpt-mem0 ui --suspend  # same, but the models stay off - the VRAM stays free
 cpt-mem0 status     # processes, VRAM, store size
 cpt-mem0 update     # update the llama.cpp build (never automatic)
 ```
+
+### The window
+
+`cpt-mem0 ui` opens a browser window that the daemon serves itself. It
+is a client - the store has an exclusive lock and only the daemon may
+hold it.
+
+The big switch starts and stops the models. The daemon and the store
+stay up: the models are child processes, the memory lives in the
+daemon. With the switch off the VRAM is free, the memories are still
+there, and the search says so instead of failing with a connection
+error.
+
+The topic buttons are filled from the store: the facts are grouped by
+the vectors that are already in Qdrant, and the local LLM gives every
+group a name of two or three words.
+
+See [docs/ui.md](docs/ui.md).
 
 ## Status
 
@@ -81,7 +106,11 @@ cpt-mem0 update     # update the llama.cpp build (never automatic)
 | GGUF header reader | done |
 | VRAM planner | done |
 | Model catalogue | done, 6 models / 35 quantisations, all sizes and KV constants measured |
-| CLI (`plan`, `models`, `validate-catalogue`, `runtime`, `init`, `update`, `start`, `stop`, `status`) | done |
+| CLI (`plan`, `models`, `validate-catalogue`, `runtime`, `init`, `update`, `start`, `stop`, `status`, `ui`) | done |
+| The window (HTML, CSS, JavaScript) | done, served by the daemon |
+| The on/off switch for the models | done, the store stays up |
+| The topic buttons (clustering over the stored vectors) | done |
+| Full memory CRUD (find, change, delete one, delete all, reset) | done, verified against the real mem0 |
 | llama.cpp bootstrap and self-update | done, installed and verified on this machine |
 | Daemon, REST and MCP server | done |
 | Store integration | done, Qdrant embedded with the mem0 engine |
@@ -116,6 +145,9 @@ See [SPEC.md](SPEC.md) for the full design and the open questions.
 | [docs/verification.md](docs/verification.md) | Every measurement behind the spec's numbers |
 | [docs/catalogue.md](docs/catalogue.md) | Model catalogue, file sizes, KV constants, resulting selections |
 | [docs/api.md](docs/api.md) | CLI, HTTP and MCP contracts |
+| [docs/ui.md](docs/ui.md) | The window: the switch, the topic buttons, the routes |
+| [docs/daemon.md](docs/daemon.md) | The daemon: the order of startup and shutdown |
+| [docs/runtime.md](docs/runtime.md) | The llama.cpp runtime, the update and the rollback |
 | [docs/testing.md](docs/testing.md) | How to run the tests, and what needs a free GPU |
 
 ## Key findings

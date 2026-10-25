@@ -22,6 +22,7 @@ import secrets
 import threading
 import time
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -48,6 +49,13 @@ class DaemonPaths:
     def under(cls, base: Path) -> DaemonPaths:
         return cls(logs=base / "logs", state=base / "state")
 
+    @classmethod
+    def default(cls) -> DaemonPaths:
+        """The standard place: under the data directory of the app."""
+        from .install import data_dir
+
+        return cls.under(data_dir())
+
 
 class ApiError(Exception):
     """An error the API reports to the client."""
@@ -65,8 +73,20 @@ class MemoryService:
     REST endpoints do the same thing.
     """
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine,
+                 is_suspended: Callable[[], bool] | None = None) -> None:
         self.engine = engine
+        #: Whether the models are down. The search needs the embedder
+        #: and the write needs the LLM, so both refuse while the
+        #: models are down - with a message that says so, not with a
+        #: connection error.
+        self._is_suspended = is_suspended or (lambda: False)
+
+    def _require_models(self, what: str) -> None:
+        if self._is_suspended():
+            raise ApiError(
+                f"the models are suspended - {what} needs them. Switch "
+                f"them on first.", status=503)
 
     def remember(self, text: str, user_id: str | None = None,
                  metadata: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -77,6 +97,7 @@ class MemoryService:
         """
         if not text or not text.strip():
             raise ApiError("the text is empty")
+        self._require_models("storing a fact")
         result = self.engine.remember(text, user_id, metadata)
         return {
             "ok": True,
@@ -89,6 +110,7 @@ class MemoryService:
         """Search the store."""
         if not query or not query.strip():
             raise ApiError("the query is empty")
+        self._require_models("the search")
         results = self.engine.recall(query, user_id, limit)
         return {
             "ok": True,
@@ -171,6 +193,11 @@ class Daemon:
         self._http: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._events: list[dict[str, Any]] = []
+        #: True when the models are down and the VRAM is free.
+        self.suspended = False
+        #: The settings of the window.
+        self.settings_data: dict[str, Any] = {}
+        self._load_settings()
 
     # ------------------------------------------------------------------
     # setup
@@ -223,18 +250,27 @@ class Daemon:
     # lifecycle
     # ------------------------------------------------------------------
 
-    def start(self, timeout: float = 180.0) -> None:
+    def start(self, timeout: float = 180.0,
+              suspend: bool = False) -> None:
         """Start the servers, open the store and serve the API.
 
         The order matters: the servers come up first, because the
         engine needs their endpoints. The store comes last, because
         its lock is the one resource that cannot be taken back.
+
+        With ``suspend`` the servers stay down. The store opens
+        anyway - it does not need a model - and the API comes up. So
+        the window is there, the memory is there, and the VRAM stays
+        free until the user presses the switch.
         """
         self.paths.logs.mkdir(parents=True, exist_ok=True)
         self.paths.state.mkdir(parents=True, exist_ok=True)
 
-        for spec in self.supervisor.states:
-            self.supervisor.start(spec, timeout=timeout)
+        if suspend:
+            self.suspended = True
+        else:
+            for spec in self.supervisor.states:
+                self.supervisor.start(spec, timeout=timeout)
 
         self.engine = Engine(
             llm=llama_endpoint(self.config.llm.port,
@@ -247,11 +283,23 @@ class Daemon:
             user_id=self.config.user_id,
         )
         self.engine.open()
-        self.service = MemoryService(self.engine)
+        self.service = MemoryService(
+            self.engine, is_suspended=lambda: self.suspended)
 
         self._start_http()
         self.started_at = time.time()
         self._write_pid_file()
+
+    @property
+    def address(self) -> str:
+        """The address of the window.
+
+        Empty while the HTTP server is not up yet.
+        """
+        if self._http is None:
+            return ""
+        host, port = self._http.server_address[:2]
+        return f"http://{host}:{port}"
 
     def _write_pid_file(self) -> None:
         """Write the pid file.
@@ -326,8 +374,43 @@ class Daemon:
         finally:
             self.stop()
 
+    def suspend(self) -> dict[str, Any]:
+        """Stop the models and free the VRAM.
+
+        **The daemon and the store stay up.** The models are child
+        processes, the store lives in this process. So "off" means:
+        the memory is still there, it can still be listed and deleted,
+        and only the VRAM is free.
+
+        The search needs the embedder and the write needs the LLM, so
+        both refuse while the models are down - with a message that
+        says so, not with a connection error.
+        """
+        if self.suspended:
+            return {"suspended": True, "already": True}
+
+        self.supervisor.stop_all()
+        self.suspended = True
+        self._log_event("runtime", "the models were suspended")
+        return {"suspended": True}
+
+    def resume(self, timeout: float = 180.0) -> dict[str, Any]:
+        """Start the models again."""
+        if not self.suspended:
+            return {"suspended": False, "already": True}
+
+        for spec in self.supervisor.states:
+            self.supervisor.start(spec, timeout=timeout)
+        self.suspended = False
+        self._log_event("runtime", "the models were resumed")
+        return {"suspended": False}
+
     def _watch(self) -> None:
         """Restart a server that died."""
+        if self.suspended:
+            # The models were stopped on purpose. Nothing restarts
+            # them - only the user does that.
+            return
         for name, state in list(self.supervisor.states.items()):
             if state.process is None:
                 continue
@@ -342,6 +425,215 @@ class Daemon:
     # status
     # ------------------------------------------------------------------
 
+    def settings(self) -> dict[str, Any]:
+        """The settings of the window."""
+        return {
+            "autostart": self.settings_data.get("autostart", False),
+            "voice": self.settings_data.get("voice", False),
+            "winamp": self.settings_data.get("winamp", True),
+            "model": self.settings_data.get("model"),
+        }
+
+    def set_setting(self, name: str, value: Any) -> dict[str, Any]:
+        """Change one setting.
+
+        The autostart is a real system change on Windows: it writes a
+        scheduled task that starts the daemon at the logon. It is
+        never done without being asked for.
+        """
+        if name not in ("autostart", "voice", "winamp", "model"):
+            raise ApiError(f"unknown setting: {name}")
+
+        if name == "autostart":
+            self.settings_data["autostart"] = bool(value)
+            self._apply_autostart(bool(value))
+        elif name == "model":
+            self.settings_data["model"] = str(value) if value else None
+        else:
+            self.settings_data[name] = bool(value)
+
+        self._save_settings()
+        return {"ok": True, "settings": self.settings()}
+
+    def _settings_path(self) -> Path:
+        from .install import config_dir
+
+        return config_dir() / "settings.json"
+
+    def _load_settings(self) -> None:
+        try:
+            import json
+
+            self.settings_data = json.loads(
+                self._settings_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self.settings_data = {}
+
+    def _save_settings(self) -> None:
+        try:
+            import json
+
+            path = self._settings_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self.settings_data, indent=2),
+                            encoding="utf-8")
+        except OSError:
+            pass
+
+    def _apply_autostart(self, enabled: bool) -> None:
+        """Write the autostart task on Windows.
+
+        The task starts the daemon at the logon with the models
+        **off** - the daemon comes up, the API is reachable, and the
+        VRAM stays free until the user switches the models on. The
+        reason is the decision: nothing happens to the GPU without
+        being asked for.
+        """
+        import os
+        import subprocess
+        import sys
+
+        if os.name != "nt":
+            # On Linux and macOS the autostart is a systemd unit or a
+            # launch agent - not part of this version.
+            return
+
+        task_name = "Cpt_Mem0"
+        # The command line for the task. The path to the executable can
+        # have spaces, so it is quoted - twice, because schtasks takes
+        # the whole /TR argument as one string.
+        action = '"' + sys.executable + '" -m cpt_mem0.cli start'
+        command = (
+            'schtasks /Create /TN "' + task_name + '" /TR \'"' + action
+            + '"\' /SC ONLOGON /RL LIMITED /F'
+        )
+        try:
+            if enabled:
+                subprocess.run(command, shell=True, capture_output=True,
+                               timeout=30)
+            else:
+                delete = 'schtasks /Delete /TN "' + task_name + '" /F'
+                subprocess.run(delete, shell=True, capture_output=True,
+                               timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    def topics(self, count: int = 5, name: bool = True) -> dict[str, Any]:
+        """The topic buttons.
+
+        The facts come from the store, the grouping from the vectors
+        that are already there, the names from the local LLM.
+
+        When the models are suspended the grouping still works - it
+        needs no model - but the names fall back to the first fact of
+        the cluster.
+        """
+        from .topics import cluster, name_clusters, palette
+
+        entries = self.engine.vectors(limit=300) if self.engine else []
+        clusters = cluster(entries, k=max(1, min(count, 6)))
+
+        if name and not self.suspended:
+            clusters = name_clusters(clusters, llm=self._ask_llm)
+
+        colours = palette(len(clusters))
+
+        return {
+            "clusters": [entry.to_dict() for entry in clusters],
+            "colours": colours,
+            "count": len(clusters),
+            "facts": len(entries),
+        }
+
+    def _ask_llm(self, prompt: str) -> str:
+        """Ask the local LLM for a short answer.
+
+        The endpoint is the OpenAI-compatible one of the running
+        server, so the answer is the same as in the chat.
+        """
+        import json
+        import urllib.request
+
+        endpoint = llama_endpoint(self.config.llm.port,
+                                  self.config.llm.model or "model")
+        payload = json.dumps({
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.0,
+            "max_tokens": 32,
+            "stream": False,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            endpoint.url("/chat/completions"), data=payload,
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {endpoint.api_key}"},
+            method="POST")
+        with urllib.request.urlopen(request, timeout=60) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        return body["choices"][0]["message"]["content"]
+
+    def plan(self) -> dict[str, Any]:
+        """The models that fit on this card.
+
+        The UI offers every model that fits, not only the one the
+        planner picks. The user chooses what to load; the planner
+        decides how.
+
+        A model without a measured KV constant cannot be planned and
+        is listed as such - it needs a calibration run first.
+        """
+        from .catalogue import load_catalogue
+        from .hardware import detect_hardware
+        from .planner import Hardware, PlannerConfig, plan_for_hardware
+
+        hardware = detect_hardware() or Hardware(total_vram_mib=0)
+        catalogue = load_catalogue(
+            Path(__file__).resolve().parent.parent.parent / "catalogue.json")
+
+        models: list[dict[str, Any]] = []
+        for entry in catalogue.sorted_entries():
+            result = plan_for_hardware(
+                hardware, [entry],
+                PlannerConfig(embedder_backends=("llamacpp", "fastembed")))
+            candidate = result.candidate
+            models.append({
+                "model_id": entry.model_id,
+                "fits": bool(result.viable and candidate is not None),
+                "quantisation": candidate.quantisation if candidate else None,
+                "file_size_mib": round(entry.quantisations[0].file_size_mib)
+                if entry.quantisations else None,
+                "total_vram_mib": round(candidate.total_vram_mib)
+                if candidate else None,
+                "n_ctx": candidate.n_ctx if candidate else None,
+                "rank_basis": entry.rank_basis,
+                "measured": entry.extraction is not None,
+                "reason": result.diagnostics.get("reason")
+                if not result.viable else None,
+            })
+
+        return {
+            "gpu": {
+                "name": hardware.name,
+                "total_vram_mib": hardware.total_vram_mib,
+            },
+            "models": models,
+        }
+
+    def runtime_status(self) -> dict[str, Any]:
+        """What the on/off button shows.
+
+        The VRAM number is the point of it: the user wants to see
+        that the models are gone and the card is free.
+        """
+        from .supervisor import gpu_free_mib, gpu_used_mib
+
+        return {
+            "suspended": self.suspended,
+            "models_loaded": not self.suspended,
+            "gpu_used_mib": gpu_used_mib(),
+            "gpu_free_mib": gpu_free_mib(),
+            "servers": self.supervisor.status(),
+        }
+
     def status(self) -> dict[str, Any]:
         """The state of the daemon."""
         from .supervisor import gpu_used_mib
@@ -355,11 +647,15 @@ class Daemon:
         if self.engine is not None and self.engine.is_open:
             try:
                 count = self.engine.count()
-            except Exception:
+            except Exception as error:
+                # The counter must not fail silently - a wrong number
+                # in the window is worse than no number.
                 count = None
+                self._log_event("store", f"the count failed: {error}")
 
         return {
             "running": self._http is not None,
+            "suspended": self.suspended,
             "uptime": round(time.time() - self.started_at, 1)
             if self.started_at else 0.0,
             "address": f"http://{self.config.server.host}:"
@@ -375,6 +671,18 @@ class Daemon:
 # ----------------------------------------------------------------------
 # the HTTP layer
 # ----------------------------------------------------------------------
+
+#: The directory with the user interface.
+UI_DIR = Path(__file__).resolve().parent / "ui"
+
+#: The files the browser may ask for. Anything else is not served.
+UI_FILES = {
+    "/": ("index.html", "text/html; charset=utf-8"),
+    "/index.html": ("index.html", "text/html; charset=utf-8"),
+    "/ui/style.css": ("style.css", "text/css; charset=utf-8"),
+    "/ui/app.js": ("app.js", "application/javascript; charset=utf-8"),
+}
+
 
 def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
     """The request handler for this daemon."""
@@ -410,6 +718,21 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                 raise ApiError("the body is not a JSON object")
             return data
 
+        def _send_ui(self, path: str) -> None:
+            """Deliver a file of the user interface."""
+            name, content_type = UI_FILES[path]
+            try:
+                body = (UI_DIR / name).read_bytes()
+            except OSError:
+                self._send(404, {"ok": False, "error": "not found"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(body)
+
         def _authorised(self) -> bool:
             """Whether the request may proceed.
 
@@ -441,12 +764,33 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
             query = urllib.parse.parse_qs(parsed.query)
 
             try:
+                if path in UI_FILES:
+                    self._send_ui(path)
+                    return
+
                 if path in ("/health", "/v1/health"):
                     self._send(200, {"ok": True, "status": "healthy"})
                     return
 
                 if path == "/status":
                     self._send(200, daemon.status())
+                    return
+
+                if path in ("/runtime", "/v1/runtime"):
+                    self._send(200, daemon.runtime_status())
+                    return
+
+                if path in ("/settings", "/v1/settings"):
+                    self._send(200, daemon.settings())
+                    return
+
+                if path in ("/plan", "/v1/plan"):
+                    self._send(200, daemon.plan())
+                    return
+
+                if path in ("/topics", "/v1/topics"):
+                    count = int(query.get("count", ["5"])[0])
+                    self._send(200, daemon.topics(count=count))
                     return
 
                 if not self._authorised():
@@ -498,6 +842,20 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     user = body.get("user_id")
                     limit = int(body.get("limit") or 5)
                     self._send(200, service.recall(query, user, limit))
+                    return
+
+                if path in ("/settings", "/v1/settings"):
+                    self._send(200, daemon.settings())
+                    return
+
+                if path in ("/runtime/suspend", "/v1/runtime/suspend"):
+                    # The models stop, the VRAM is free, the memory
+                    # stays.
+                    self._send(200, daemon.suspend())
+                    return
+
+                if path in ("/runtime/resume", "/v1/runtime/resume"):
+                    self._send(200, daemon.resume())
                     return
 
                 if path == "/memories/reset":
@@ -553,6 +911,20 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                 if not self._authorised():
                     self._send(401, {"ok": False, "error": "unauthorised"})
                     return
+                if path in ("/settings", "/v1/settings"):
+                    self._send(200, daemon.settings())
+                    return
+
+                if path in ("/runtime/suspend", "/v1/runtime/suspend"):
+                    # The models stop, the VRAM is free, the memory
+                    # stays.
+                    self._send(200, daemon.suspend())
+                    return
+
+                if path in ("/runtime/resume", "/v1/runtime/resume"):
+                    self._send(200, daemon.resume())
+                    return
+
                 if path == "/memories/reset":
                     self._send(200, self._service().reset())
                     return

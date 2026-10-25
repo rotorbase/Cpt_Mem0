@@ -527,6 +527,55 @@ def _process_alive(pid: int) -> bool:
     return True
 
 
+def cmd_ui(args) -> int:
+    """Start the daemon and open the window.
+
+    The window is served by the daemon. It is a client: it never
+    opens the store itself, the store has an exclusive lock and the
+    daemon is the only one that may hold it.
+
+    With ``--suspend`` the daemon comes up with the models off. The
+    API is reachable, the memory is there, and the VRAM stays free
+    until the big switch is pressed.
+    """
+    import threading
+    import webbrowser
+
+    from .config import Config
+    from .daemon import Daemon, DaemonPaths
+
+    config = Config()
+    daemon = Daemon(config, DaemonPaths.default())
+
+    thread = threading.Thread(
+        target=daemon.start, kwargs={"suspend": args.suspend},
+        daemon=True)
+    thread.start()
+
+    # The daemon has to be up before the browser asks for the page.
+    for _ in range(120):
+        if daemon.address:
+            break
+        time.sleep(0.25)
+
+    address = daemon.address or f"http://{config.server.host}"
+    print(f"the window is at {address}")
+
+    if not args.no_browser:
+        try:
+            webbrowser.open(address)
+        except Exception:
+            pass
+
+    try:
+        while thread.is_alive():
+            thread.join(0.5)
+    except KeyboardInterrupt:
+        print("stopping")
+        daemon.stop()
+    return 0
+
+
 def cmd_status(args) -> int:
     """Report the state of the daemon."""
     from .install import data_dir
@@ -631,6 +680,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     stop = sub.add_parser("stop", help="stop the daemon")
     stop.set_defaults(func=cmd_stop)
+
+    ui = sub.add_parser(
+        "ui", help="open the window in the browser")
+    ui.add_argument("--no-browser", action="store_true",
+                    help="only print the address, do not open a browser")
+    ui.add_argument("--suspend", action="store_true",
+                    help="start the daemon with the models off")
+    ui.set_defaults(func=cmd_ui)
 
     status = sub.add_parser("status",
                              help="report the state of the daemon")
