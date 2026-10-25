@@ -19,6 +19,7 @@ machine without the package.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import traceback
@@ -121,6 +122,14 @@ def open_window(address: str, title: str = WINDOW_TITLE,
     if not webview_available():
         log_problem("pywebview is not installed - the browser is used")
         return _open_browser(address)
+
+    # **The edgechromium backend, not winforms.** The winforms
+    # backend needs pythonnet, and pythonnet needs hostfxr.dll - which
+    # the frozen app cannot find. The window then fell back to the
+    # browser, and the user got a tab instead of a window. The
+    # edgechromium backend talks to the WebView2 through ctypes and
+    # needs no .NET at all.
+    os.environ.setdefault("PYWEBVIEW_GUI", "edgechromium")
 
     import webview
 

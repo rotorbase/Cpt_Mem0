@@ -23,7 +23,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # PyInstaller puts the directory of the specification in SPECPATH.
 # The specification lives in packaging/, so the repository root is one
@@ -47,25 +47,31 @@ binaries = []
 # mem0 and qdrant bring their own dependencies, and PyInstaller does
 # not always find them. The hidden imports are listed explicitly.
 hiddenimports = [
-    "mem0",
-    "mem0.memory.main",
-    "mem0.llms.openai",
-    "mem0.embeddings.openai",
-    "mem0.vector_stores.qdrant",
-    "qdrant_client",
-    "qdrant_client.local",
-    "qdrant_client.qdrant_client",
-    "qdrant_client.http",
-    "webview",
-    "webview.platforms.edgechromium",
-    "webview.platforms.winforms",
-    "clr_loader",
-    "clr",
     "numpy",
     "yaml",
+    # The window. The edgechromium backend talks to the WebView2
+    # through ctypes and needs no .NET - the winforms backend needs
+    # pythonnet, and pythonnet needs hostfxr.dll, which is not
+    # somewhere a frozen app can rely on finding it.
+    "webview",
+    "webview.platforms.edgechromium",
 ]
-hiddenimports += collect_submodules("mem0")
-hiddenimports += collect_submodules("qdrant_client")
+
+# **mem0 and qdrant have to be collected completely.**
+#
+# collect_submodules alone was not enough: the bundle had the
+# .dist-info of both packages and neither of the packages. mem0
+# imports its providers by name at runtime, so the modules are only
+# found when the whole tree is collected - data files and all.
+for package in ("mem0", "qdrant_client", "mem0.vector_stores",
+                "mem0.llms", "mem0.embeddings", "mem0.memory"):
+    try:
+        package_data, package_binaries, package_hidden = collect_all(package)
+    except Exception:
+        continue
+    datas += package_data
+    binaries += package_binaries
+    hiddenimports += package_hidden
 
 # The packages that must not be bundled - they are part of the
 # system or are only needed on the build machine.
