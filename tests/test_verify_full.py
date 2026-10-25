@@ -124,6 +124,11 @@ class TestPerProcessMeasurement:
                 stdout = ("100, 500\n200, 1500\n300, 200\n")
             return Result()
 
+        # The function looks for nvidia-smi before it runs it. On a
+        # machine without a card the command is not there, and the
+        # function answers None - so the test has to pretend it is.
+        monkeypatch.setattr("shutil.which",
+                            lambda name: "/usr/bin/nvidia-smi")
         monkeypatch.setattr(vf.subprocess, "run", fake_run)
         assert vf.process_vram_mib(200) == 1500
 
@@ -133,6 +138,9 @@ class TestPerProcessMeasurement:
                 returncode = 0
                 stdout = "100, 500\n"
             return Result()
+
+        monkeypatch.setattr("shutil.which",
+                            lambda name: "/usr/bin/nvidia-smi")
 
         monkeypatch.setattr(vf.subprocess, "run", fake_run)
         assert vf.process_vram_mib(999) is None

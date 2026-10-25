@@ -661,9 +661,23 @@ class Daemon:
         """
         from .catalogue import load_default_catalogue
         from .hardware import detect_hardware
-        from .planner import Hardware, PlannerConfig, plan_for_hardware
+        from .planner import PlannerConfig, plan_for_hardware
 
-        hardware = detect_hardware() or Hardware(total_vram_mib=0)
+        hardware = detect_hardware()
+        if hardware is None:
+            # **No GPU is not an error.** The window has to answer on
+            # every machine - a virtual machine, a server, a laptop
+            # with a card the driver does not report. The planner
+            # needs a positive number of megabytes, and zero is not
+            # one: it raises. So the answer is an empty list with the
+            # reason, not a crash.
+            return {
+                "gpu": {"name": None, "total_vram_mib": 0},
+                "models": [],
+                "count": 0,
+                "reason": "no GPU was found on this machine",
+            }
+
         catalogue = load_default_catalogue()
 
         models: list[dict[str, Any]] = []
@@ -693,6 +707,8 @@ class Daemon:
                 "total_vram_mib": hardware.total_vram_mib,
             },
             "models": models,
+            "count": len(models),
+            "reason": None,
         }
 
     def runtime_status(self) -> dict[str, Any]:

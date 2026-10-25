@@ -183,6 +183,19 @@ class TestTheRoutes:
         assert "clusters" in data
         assert "colours" in data
 
+    def test_the_plan_without_a_gpu(self, running, monkeypatch):
+        """A machine without a GPU gets an answer, not a crash.
+
+        The planner needs a positive number of megabytes and zero
+        raises - so the answer is an empty list with the reason.
+        """
+
+        monkeypatch.setattr("cpt_mem0.hardware.detect_hardware", lambda: None)
+        daemon = running
+        result = daemon.plan()
+        assert result["models"] == []
+        assert result["reason"]
+
     def test_the_settings(self, running):
         status, body = self._get(running, "/settings")
         assert status == 200
@@ -199,9 +212,27 @@ class TestSuspend:
         assert daemon.suspended is True
 
     def test_resume_clears_the_flag(self, daemon):
+        """With a runtime the models come back."""
+        daemon._runtime_error = ""
+        daemon.supervisor.states = {}
         daemon.suspend()
         daemon.resume()
         assert daemon.suspended is False
+
+    def test_resume_without_a_runtime_says_what_is_missing(self, daemon):
+        """Without the runtime the switch must not crash.
+
+        The message names the command that fixes it. The daemon comes
+        up without a runtime - that is the first start of every user.
+        """
+        from cpt_mem0.daemon import ApiError
+
+        daemon._runtime_error = (
+            "no llama.cpp runtime is installed. Run 'cpt-mem0 init' first.")
+        daemon.suspend()
+        with pytest.raises(ApiError) as error:
+            daemon.resume()
+        assert "cpt-mem0 init" in str(error.value)
 
     def test_the_store_stays_open(self, daemon):
         """The memory is in the daemon process, not in the model."""

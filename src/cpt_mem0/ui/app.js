@@ -201,9 +201,15 @@ async function refreshModels() {
       select.appendChild(option);
     }
     const fitting = (data.models || []).filter((m) => m.fits);
-    $("models").textContent = fitting.length
-      ? `${fitting.length} passend`
-      : "kein Modell passt";
+    if (data.reason) {
+      // No GPU - the window has to say that, not show an empty list.
+      $("models").textContent = "keine GPU";
+      status(data.reason, "error");
+    } else {
+      $("models").textContent = fitting.length
+        ? `${fitting.length} passend`
+        : "kein Modell passt";
+    }
   } catch (error) {
     status(error.message, "error");
   }
