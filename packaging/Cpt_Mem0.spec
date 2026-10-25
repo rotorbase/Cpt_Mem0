@@ -25,7 +25,14 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
 
-ROOT = Path(os.getcwd()).resolve()
+# PyInstaller puts the directory of the specification in SPECPATH.
+# The specification lives in packaging/, so the repository root is one
+# level above it. The current directory is the fallback - and then the
+# root is the current directory itself.
+if "SPECPATH" in globals():
+    ROOT = Path(SPECPATH).resolve().parent
+else:
+    ROOT = Path(os.getcwd()).resolve()
 SRC = ROOT / "src"
 
 # The package itself.

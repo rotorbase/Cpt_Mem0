@@ -36,6 +36,10 @@ jobs:
           cache: pip
 
       - name: Build the package
+        # The specification uses the source tree as the base. The
+        # package is not installed - it is built from the sources.
+        env:
+          PYTHONPATH: src
         run: python packaging/build_windows.py
 
       - name: Check the package starts

@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # The package is not installed - it is used from the source tree.
+  PYTHONPATH: src
+
 jobs:
   tests:
     name: Tests
