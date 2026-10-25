@@ -1242,6 +1242,16 @@ models on its own - the watcher leaves a suspended runtime alone.
   Without the LLM the first fact of the group stays as the name.
 - The colours are spread over the hue circle with the same lightness.
 
+**The voice output uses SAPI.** That is the speech API Windows has
+had since XP: no model to load, no download, no VRAM. A TTS model in
+llama.cpp would cost a few hundred megabytes on a card that is
+already full. The German voice is preferred, because the facts are in
+whatever language the user writes in. What is read out are the facts,
+not the whole answer, and the speaking runs in the background so the
+answer appears at the same moment the voice starts. On a machine
+without a speech engine the switch says so instead of pretending to
+work.
+
 **The telemetry.** mem0's telemetry is off, and it has to be off
 before mem0 is imported - the flag is read once, when the module
 loads.

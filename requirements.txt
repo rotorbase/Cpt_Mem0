@@ -8,3 +8,7 @@ mem0ai==2.2.1
 qdrant-client==1.20.0
 pyyaml==6.0.3
 pywebview>=5.0
+
+# The voice output. It is the speech API that has been in Windows
+# since XP - no model, no download, no VRAM.
+pywin32>=306; sys_platform == "win32"

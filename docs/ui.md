@@ -89,10 +89,33 @@ important.
 |---|---|
 | `MODELL` | every model that fits on the card, with its size. The choice is used for the next start. |
 | `AUTOSTART (WINDOWS)` | writes a scheduled task that starts the daemon at the logon. **The models stay off** - the VRAM is free until the switch is pressed. |
-| `SPRACHAUSGABE` | reads the answer out. The voice runs on the CPU, so it costs no VRAM. |
+| `SPRACHAUSGABE` | reads the facts out. The voice is the one Windows already has, so it costs no VRAM. |
 | `WINAMP-LOOK` | the quiet look without the neon. |
 | `THEMEN` | how many topic buttons, three to six. |
 | `STORE LEEREN` | deletes everything. It asks first. |
+
+## The voice
+
+**It costs no VRAM.** The voice is SAPI, the speech API that has been
+in Windows since XP. There is no model to load, nothing to download,
+and nothing that takes a bite out of the card. A TTS model in
+llama.cpp would be a few hundred megabytes of VRAM on a card that is
+already full.
+
+The German voice is preferred - the facts in the store are in
+whatever language the user writes in, and a German voice reading
+German is easier to hear than an English one. When there is no
+German voice, the first one is used.
+
+What is read out are the **facts**, not the whole answer: the first
+few, each on its own line. A long list would take a minute to read,
+and the user knows what they wrote.
+
+The speaking runs in the background. The answer appears at the same
+moment the voice starts, not when it ends.
+
+On a machine without a speech engine the switch says so instead of
+pretending to work.
 
 ## The routes
 

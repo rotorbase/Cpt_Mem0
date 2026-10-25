@@ -198,6 +198,10 @@ class Daemon:
         #: The settings of the window.
         self.settings_data: dict[str, Any] = {}
         self._load_settings()
+        #: The voice. It is created on the first use - the SAPI
+        #: object is the slow part and it is not needed when the
+        #: voice is off.
+        self._speaker: Any = None
 
     # ------------------------------------------------------------------
     # setup
@@ -425,6 +429,23 @@ class Daemon:
     # status
     # ------------------------------------------------------------------
 
+    def speak(self, text: str) -> bool:
+        """Read the text out loud, when the voice is on.
+
+        **It costs no VRAM.** The voice is the one Windows already
+        has, so nothing is loaded onto the card.
+        """
+        if not self.settings_data.get("voice"):
+            return False
+        if not text:
+            return False
+
+        from .voice import Speaker
+
+        if self._speaker is None:
+            self._speaker = Speaker()
+        return self._speaker.speak(text)
+
     def settings(self) -> dict[str, Any]:
         """The settings of the window."""
         return {
@@ -453,6 +474,19 @@ class Daemon:
             self.settings_data[name] = bool(value)
 
         self._save_settings()
+
+        # The voice switch has to say whether it can work at all.
+        if name == "voice" and value:
+            from .voice import available
+
+            if not available():
+                return {
+                    "ok": False,
+                    "error": "this system has no speech engine - the "
+                             "voice needs Windows",
+                    "settings": self.settings(),
+                }
+
         return {"ok": True, "settings": self.settings()}
 
     def _settings_path(self) -> Path:
@@ -819,7 +853,13 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     q = query.get("q", query.get("query", [""]))[0]
                     user = query.get("user_id", [None])[0]
                     limit = int(query.get("limit", ["5"])[0])
-                    self._send(200, self._service().recall(q, user, limit))
+                    result = self._service().recall(q, user, limit)
+                    # The window asks with GET, so the voice has to
+                    # be started here as well.
+                    from .voice import summarise
+
+                    daemon.speak(summarise(result.get("results", [])))
+                    self._send(200, result)
                     return
 
                 self._send(404, {"ok": False, "error": "not found"})
@@ -847,14 +887,24 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     text = str(body.get("text") or body.get("content") or "")
                     user = body.get("user_id")
                     metadata = body.get("metadata")
-                    self._send(200, service.remember(text, user, metadata))
+                    result = service.remember(text, user, metadata)
+                    # The voice reads out what was stored - the facts,
+                    # not the whole answer.
+                    from .voice import summarise
+
+                    daemon.speak(summarise(result.get("results", [])))
+                    self._send(200, result)
                     return
 
                 if path in ("/search", "/v1/search", "/recall"):
                     query = str(body.get("query") or body.get("q") or "")
                     user = body.get("user_id")
                     limit = int(body.get("limit") or 5)
-                    self._send(200, service.recall(query, user, limit))
+                    result = service.recall(query, user, limit)
+                    from .voice import summarise
+
+                    daemon.speak(summarise(result.get("results", [])))
+                    self._send(200, result)
                     return
 
                 if path in ("/settings", "/v1/settings"):

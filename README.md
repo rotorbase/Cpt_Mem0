@@ -46,9 +46,11 @@ that `start` would use.
 - **Runs the store embedded.** Qdrant in-process: no server, no Docker, no
   database daemon.
 - **Stays local.** No telemetry, no outbound requests.
-- **Has a window.** A browser window that the daemon delivers: a big
-  on/off switch for the models, the topic buttons filled from the store,
-  and every memory findable and deletable.
+- **Has a window.** A native window that the daemon serves: a big
+  on/off switch for the models, the topic buttons filled from the
+  store, and every memory findable and deletable.
+- **Can speak.** The voice output uses the speech engine Windows
+  already has - no model, no download, no VRAM.
 - **Finds everything.** mem0's `get_all` returns 20 memories by default —
   the rest are unfindable. The limit is passed explicitly.
 
@@ -121,6 +123,7 @@ See [docs/ui.md](docs/ui.md).
 | The native window (pywebview on WebView2) | done, the .exe opens it |
 | The Windows package (PyInstaller, onedir) | done, 89 MB, the .exe is 17 MB |
 | The GitHub Actions build | done, the package is attached to every release |
+| The voice output (Windows SAPI) | done, no VRAM, German voice preferred |
 | llama.cpp bootstrap and self-update | done, installed and verified on this machine |
 | Daemon, REST and MCP server | done |
 | Store integration | done, Qdrant embedded with the mem0 engine |
