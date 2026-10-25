@@ -670,37 +670,57 @@ The pin lives in `config.yaml` as `llama.cpp.build: "b11838"`.
 
 ### 7.2 CUDA runtime bundling — the DLL trap
 
-`llama.cpp` ships two Windows/Linux CUDA variants:
+`llama.cpp` ships **two separate archives** for a CUDA build. They are
+not alternatives to each other — a CUDA install needs **both**.
 
-| Asset prefix | Contains | Size (win-x64, CUDA 13.4) |
+| Asset | Contains | Size (win-x64, CUDA 13.4) |
 |---|---|---|
-| `llama-…-bin-win-cuda-13.4-x64.zip` | binary only | 152.5 MB |
-| **`cudart-llama-…-bin-win-cuda-13.4-x64.zip`** | binary **+ bundled CUDA runtime** | **403.9 MB** |
+| `llama-b11838-bin-win-cuda-13.4-x64.zip` | the binaries: `llama-server.exe`, `llama-server-impl.dll`, `ggml-cuda.dll`, … | 152.5 MiB |
+| `cudart-llama-bin-win-cuda-13.4-x64.zip` | **only** the CUDA runtime: `cublas64_13.dll`, `cublasLt64_13.dll`, `cudart64_13.dll` | 403.9 MiB |
 
-**Decision: always use the `cudart-` variant.**
+**Measured on the real archive:** `cudart-llama-bin-win-cuda-13.4-x64.zip`
+contains exactly three files and **no `llama-server` at all**. The
+installer therefore unpacks the binary package and then places the
+runtime DLLs next to the executable, where the loader looks for them.
 
-This matters more than it looks. When the CUDA runtime DLLs are missing from
-the binary directory, `llama.cpp` falls back to CPU **silently** — no error,
-the port opens, `/v1/models` answers 200, and inference runs at ~6 tok/s
-instead of ~47 tok/s. This failure has been observed repeatedly in this
-project and is invisible to any check that does not read VRAM.
+**Why this matters more than it looks.** When the CUDA runtime DLLs are
+missing from the binary directory, `llama.cpp` falls back to CPU
+**silently** — no error, the port opens, `/v1/models` answers 200, and
+inference runs at ~6 tok/s instead of ~47 tok/s. This failure has been
+observed repeatedly in this project and is invisible to any check that
+does not read VRAM.
 
-The `cudart-` bundles remove the failure mode at its source. The planner
-still verifies the outcome by measuring VRAM (P2).
+The installer refuses to point at a CUDA build without the runtime
+libraries, and `cpt-mem0 runtime` reports a missing runtime.
+
+**Verified:** the installed build 11838 lists
+`CUDA0: NVIDIA GeForce RTX 3060 (12287 MiB)` with `--list-devices`.
 
 ### 7.3 Platform matrix
 
-| Platform | Asset | CUDA variant |
+| Platform | Binary asset | Runtime asset |
 |---|---|---|
-| Windows x64 | `cudart-llama-bin-win-cuda-13.4-x64.zip` | `cudart-` |
-| Windows ARM64 | `cudart-llama-bin-win-cuda-13.4-arm64.zip` | `cudart-` |
-| Linux x64 | `cudart-llama-bin-ubuntu-cuda-13.4-x64.tar.gz` | `cudart-` |
-| Linux ARM64 | `cudart-llama-bin-ubuntu-cuda-13.4-arm64.tar.gz` | `cudart-` |
-| macOS (Apple Silicon) | `llama-bin-macos-arm64.tar.gz` | Metal, no CUDA |
-| CPU-only fallback | `llama-bin-win-cpu-x64.zip`, `llama-bin-ubuntu-x64.tar.gz` | — |
+| Windows x64 | `llama-b11838-bin-win-cuda-13.4-x64.zip` | `cudart-llama-bin-win-cuda-13.4-x64.zip` |
+| Windows ARM64 | `llama-b11838-bin-win-cuda-13.4-arm64.zip` | `cudart-llama-bin-win-cuda-13.4-arm64.zip` |
+| Linux x64 | `llama-b11838-bin-ubuntu-cuda-13.4-x64.tar.gz` | `cudart-llama-b11838-bin-ubuntu-cuda-13.4-x64.tar.gz` |
+| Linux ARM64 | `llama-b11838-bin-ubuntu-cuda-13.4-arm64.tar.gz` | `cudart-llama-b11838-bin-ubuntu-cuda-13.4-arm64.tar.gz` |
+| macOS (Apple Silicon) | `llama-bin-macos-arm64.tar.gz` | none, Metal |
+| CPU-only fallback | `llama-b11838-bin-win-cpu-x64.zip`, `llama-b11838-bin-ubuntu-x64.tar.gz` | none |
 
 CUDA 12.4 variants exist for older drivers. The installer selects by
 detecting the installed driver version.
+
+**The asset names are not uniform.** Some carry the build number and
+some do not (`cudart-llama-bin-win-cuda-13.4-x64.zip` has none), and
+the Linux CPU build has no "cpu" in its name at all
+(`llama-b11838-bin-ubuntu-x64.tar.gz`). The installer matches on the
+platform parts, never on a fixed prefix. The test suite uses the real
+asset list of b11838.
+
+**The archive structures differ too.** The Windows binary package is
+flat — 53 files at the top level. The Linux package has a directory
+with the build name. The extractor detects which one it is instead of
+assuming.
 
 ### 7.4 Update procedure
 

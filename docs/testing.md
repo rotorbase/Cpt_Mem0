@@ -29,13 +29,13 @@ not shut down yet — wait a moment and check again.
 
 No GPU, no model, no network. Safe at any time, from any directory.
 
-    bash "C:/Users/willow/Documents/Cpt_Mem0/test.sh"
+    bash ./test.sh
 
 Expected: `92 passed`, total under fifteen seconds.
 
 The same thing with the full path to the interpreter, if you prefer:
 
-    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/run_tests.py"
+    ".venv/Scripts/python.exe" "scripts/run_tests.py"
 
 ### Step 3 — the hardware verification
 
@@ -67,16 +67,16 @@ has nothing to measure. Use the 4B or the 9B for the hardware check.
 
 With the 4B model — one line, no line breaks:
 
-    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/verify_plan.py" --vram 5120 --model Qwen3-4B-Instruct-2507 --quant Q4_K_M --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3-4B-Instruct-2507-GGUF/snapshots/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf" --port 8799
+    ".venv/Scripts/python.exe" "scripts/verify_plan.py" --vram 5120 --model Qwen3-4B-Instruct-2507 --quant Q4_K_M --model-file "$HOME/.cache/huggingface/hub/models--unsloth--Qwen3-4B-Instruct-2507-GGUF/snapshots/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf" --port 8799
 
 With the 9B in Q8_0 — the configuration the planner picks for a 12 GB
 card:
 
-    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/verify_plan.py" --vram 12288 --model Qwen3.5-9B --quant Q8_0 --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf" --port 8799
+    ".venv/Scripts/python.exe" "scripts/verify_plan.py" --vram 12288 --model Qwen3.5-9B --quant Q8_0 --model-file "$HOME/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf" --port 8799
 
 With the 9B in Q4_K_M — smaller, loads faster, still on the GPU:
 
-    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/verify_plan.py" --vram 12288 --model Qwen3.5-9B --quant Q4_K_M --model-file "C:/Users/willow/.cache/huggingface/hub/Qwen3.5-9B-Q4_K_M.gguf" --port 8799
+    ".venv/Scripts/python.exe" "scripts/verify_plan.py" --vram 12288 --model Qwen3.5-9B --quant Q4_K_M --model-file "$HOME/.cache/huggingface/hub/Qwen3.5-9B-Q4_K_M.gguf" --port 8799
 
 Takes about 45 seconds — that is the model load.
 
@@ -101,7 +101,7 @@ not print, and a model file that is not where the command says.
 
 Both suites in one go, with the results written to `results/`:
 
-    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/run_tests.py" --hardware --vram 12288 --model Qwen3.5-9B --quant Q8_0 --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf"
+    ".venv/Scripts/python.exe" "scripts/run_tests.py" --hardware --vram 12288 --model Qwen3.5-9B --quant Q8_0 --model-file "$HOME/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf"
 
 ### Step 4 — check that nothing is left behind
 
@@ -134,11 +134,11 @@ be interrupted. Measured: a silent hang is cut off after 3,08 s with a
 
 ## Logic tests — no GPU, no network, no model
 
-    bash "C:/Users/willow/Documents/Cpt_Mem0/test.sh"
+    bash ./test.sh
 
 or directly:
 
-    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" -m pytest "C:/Users/willow/Documents/Cpt_Mem0/tests" -q
+    ".venv/Scripts/python.exe" -m pytest "tests" -q
 
 92 tests, about ten seconds. They cover:
 
@@ -248,7 +248,7 @@ model size).
 The card tiers in SPEC.md, docs/catalogue.md and docs/verification.md
 are generated, not hand-written:
 
-    "C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe" "C:/Users/willow/Documents/Cpt_Mem0/scripts/regenerate_tiers.py"
+    ".venv/Scripts/python.exe" "scripts/regenerate_tiers.py"
 
 If the planner changes, run this and update the tables in the same
 commit. The test suite asserts that the catalogue still matches the

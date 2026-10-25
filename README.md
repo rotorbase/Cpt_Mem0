@@ -53,13 +53,19 @@ that `start` would use.
 cpt-mem0 init
 ```
 
-That detects your GPU, fetches the pinned `llama.cpp` build with CUDA
-runtime bundled, selects a model and quantisation that fit, and writes a
-configuration. It does not start anything until you say so.
+That installs the pinned `llama.cpp` build — the binaries plus the CUDA
+runtime — into its own directory. It does not change any system
+setting, no driver, no PATH. The system llama.cpp stays untouched.
+
+```
+cpt-mem0 runtime    # what is installed
+```
 
 ## Usage
 
 ```
+cpt-mem0 init       # install the pinned llama.cpp build
+cpt-mem0 runtime    # show the installed build
 cpt-mem0 plan       # show the computed configuration
 cpt-mem0 start      # run the daemon (REST + MCP on 127.0.0.1:8765)
 cpt-mem0 status     # processes, VRAM, store size
@@ -68,15 +74,15 @@ cpt-mem0 update     # update the llama.cpp build (never automatic)
 
 ## Status
 
-**Phase 1 — the planner is implemented and tested.**
+**Phase 1 (planner) and Phase 2 (runtime bootstrap) are implemented.**
 
 | Component | State |
 |---|---|
-| GGUF header reader | done, 12 tests |
-| VRAM planner | done, 48 tests |
+| GGUF header reader | done |
+| VRAM planner | done |
 | Model catalogue | done, 6 models / 35 quantisations, all sizes and KV constants measured |
-| CLI (`plan`, `models`, `validate-catalogue`) | done |
-| llama.cpp bootstrap and self-update | not started |
+| CLI (`plan`, `models`, `validate-catalogue`, `runtime`, `init`, `update`) | done |
+| llama.cpp bootstrap and self-update | done, installed and verified on this machine |
 | Daemon, REST and MCP server | not started |
 | Store integration | not started |
 
@@ -84,8 +90,13 @@ The test suite is pure logic: it reads no GPU and starts no model.
 
 ```
 $ pytest
-92 passed
+204 passed
 ```
+
+**Verified on this machine:** `cpt-mem0 init` installed build 11838 with
+the CUDA runtime, and `--list-devices` reports
+`CUDA0: NVIDIA GeForce RTX 3060 (12287 MiB)`. The details are in
+[docs/runtime.md](docs/runtime.md).
 
 There is a second suite that does need a free card — it starts one
 `llama-server` with the planned flags, asks it to generate something,

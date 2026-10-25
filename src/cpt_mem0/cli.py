@@ -187,6 +187,109 @@ def cmd_validate_catalogue(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_runtime(args) -> int:
+    """Report the installed llama.cpp build."""
+    from . import install as installer
+
+    found = installer.current_installation()
+    builds = installer.list_builds()
+    print(f"runtime directory: {installer.runtime_dir()}")
+    if builds:
+        print(f"builds on disk   : {', '.join(builds)}")
+    if not found.installed:
+        print("no build is installed - run 'cpt-mem0 init'")
+        return EXIT_NO_VIABLE_CONFIG
+    print(f"build in use     : {found.build}")
+    print(f"binary           : {found.binary}")
+    print(f"CUDA runtime     : "
+          + ("present" if found.has_cuda_runtime else "ABSENT"))
+    if not found.has_cuda_runtime:
+        print()
+        print("Without the CUDA runtime the server falls back to the CPU "
+              "silently: it starts, it answers, and it computes at a "
+              "fraction of the speed. Install the cudart- variant.")
+    return EXIT_OK
+
+
+def cmd_init(args) -> int:
+    """Install the pinned llama.cpp build."""
+    from . import install as installer
+    from .runtime import Platform, detect_cuda_version, detect_platform
+
+    target = detect_platform()
+    if args.cpu:
+        target = Platform(target.system, target.machine, False, "")
+    elif args.cuda_version:
+        target = Platform(target.system, target.machine, True,
+                          args.cuda_version)
+    elif target.cuda:
+        version = detect_cuda_version()
+        if version:
+            target = Platform(target.system, target.machine, True, version)
+
+    print(f"platform: {target.system}-{target.machine}"
+          + (f", CUDA {target.cuda_version}" if target.cuda
+             else ", CPU only"))
+    try:
+        result = installer.install(
+            getattr(args, "build", None) or None,
+            target=target,
+            archive=Path(args.archive) if args.archive else None)
+    except LookupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    print()
+    print(f"the runtime is ready: {result.binary}")
+    return EXIT_OK
+
+
+def cmd_update(args) -> int:
+    """Install a newer build, or go back to the previous one."""
+    from . import install as installer
+
+    if args.rollback:
+        result = installer.rollback()
+        if result is None:
+            return EXIT_NO_VIABLE_CONFIG
+        print(f"the build in use is now {result.build}")
+        return EXIT_OK
+
+    if args.check:
+        found = installer.current_installation()
+        print(f"build in use: {found.build or 'nothing'}")
+        print(f"builds on disk: "
+              + (", ".join(installer.list_builds()) or "none"))
+        print()
+        print("A newer build is installed with 'cpt-mem0 update --build "
+              "<tag>'.")
+        print("The tag pattern is b<number>, for example b11838.")
+        return EXIT_OK
+
+    try:
+        installed, previous = installer.update(
+            getattr(args, "build", None) or None, dry_run=False)
+    except LookupError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    print()
+    print(f"the build in use is now {installed.build}")
+    if previous is not None and previous.build:
+        print(f"the previous build ({previous.build}) is kept - "
+              f"'cpt-mem0 update --rollback' goes back to it")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="cpt-mem0",
@@ -212,6 +315,27 @@ def build_parser() -> argparse.ArgumentParser:
     validate = sub.add_parser("validate-catalogue",
                               help="check the catalogue for internal consistency")
     validate.set_defaults(func=cmd_validate_catalogue)
+
+    runtime = sub.add_parser("runtime",
+                             help="show the installed llama.cpp build")
+    runtime.set_defaults(func=cmd_runtime)
+
+    init = sub.add_parser(
+        "init", help="install the pinned llama.cpp build")
+    init.add_argument("--build", help="build to install (default: the pinned one)")
+    init.add_argument("--archive", help="install from a local archive")
+    init.add_argument("--cpu", action="store_true",
+                      help="install the CPU-only build")
+    init.add_argument("--cuda-version", help="CUDA version to build for")
+    init.set_defaults(func=cmd_init)
+
+    update = sub.add_parser("update", help="install a newer build and switch to it")
+    update.add_argument("--build", help="build to install")
+    update.add_argument("--check", action="store_true",
+                        help="report only, change nothing")
+    update.add_argument("--rollback", action="store_true",
+                        help="go back to the previous build")
+    update.set_defaults(func=cmd_update)
 
     return parser
 
