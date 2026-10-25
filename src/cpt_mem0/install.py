@@ -341,9 +341,14 @@ def rollback() -> Installation | None:
     newest other one is the one to go back to.
     """
     current = read_pointer()
+    # **The list of the builds comes from one place.** The pointer is
+    # a directory as far as the file system is concerned when it is a
+    # symlink or a junction - and it sorts after every build, so it
+    # would be chosen as the target and the pointer would point at
+    # itself. On a machine where the pointer is a text file it never
+    # shows up, and the same code was right there.
     builds = sorted(
-        (p.name for p in runtime_dir().iterdir()
-         if p.is_dir() and p.name != current),
+        (name for name in list_builds() if name != current),
         reverse=True)
     if not builds:
         print("  there is no earlier build to go back to")

@@ -333,3 +333,64 @@ class TestThePointerShapes:
         installer._write_pointer("b11838")
 
         assert "current" not in installer.list_builds()
+
+    def test_the_rollback_never_chooses_the_pointer(self, sandbox):
+        """The pointer sorts after every build.
+
+        When it was in the list of the candidates it was chosen as
+        the target, and the pointer pointed at itself - the rollback
+        broke the installation. On a machine where the pointer is a
+        text file it never showed up, and the same code was right
+        there.
+        """
+        first = sandbox / "data" / "runtime" / "llama" / "b11838"
+        second = sandbox / "data" / "runtime" / "llama" / "b11900"
+        for directory in (first, second):
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "llama-server.exe").write_bytes(b"")
+
+        installer._write_pointer("b11900")
+        assert installer.read_pointer() == "b11900"
+
+        result = installer.rollback()
+        assert result is not None
+        assert result.build == "b11838"
+        assert installer.read_pointer() == "b11838"
+
+    def test_the_rollback_with_a_junction_pointer(self, sandbox):
+        """The same with a pointer that is a directory.
+
+        This is the shape the CI runner had, and the one where the
+        rollback broke.
+        """
+        first = sandbox / "data" / "runtime" / "llama" / "b11838"
+        second = sandbox / "data" / "runtime" / "llama" / "b11900"
+        for directory in (first, second):
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "llama-server.exe").write_bytes(b"")
+
+        pointer = installer.pointer_path()
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        if pointer.exists():
+            pointer.unlink()
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(pointer), str(second)],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30)
+        if result.returncode != 0 or not pointer.is_dir():
+            pytest.skip("this system does not allow junctions")
+
+        assert installer.read_pointer() == "b11900"
+
+        rolled = installer.rollback()
+        assert rolled is not None
+        assert rolled.build == "b11838"
+        assert installer.read_pointer() == "b11838"
+
+    def test_the_rollback_without_an_earlier_build(self, sandbox):
+        """Only one build and the pointer - there is nothing to go
+        back to."""
+        self._build(sandbox)
+        installer._write_pointer("b11838")
+
+        assert installer.rollback() is None
