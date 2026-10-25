@@ -95,13 +95,25 @@ class TestTheWorkflow:
         assert (ROOT / ".github" / "workflows" / "ci.yml").is_file()
 
     def test_the_ci_workflow_checks_for_leaks(self):
-        """The CI has to look for the things that must not be in a
-        public repository: personal paths and keys."""
+        """The CI runs the same scan that runs locally."""
         workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
             encoding="utf-8")
-        assert "Users" in workflow
-        assert "ghp_" in workflow
-        assert "sk-" in workflow
+        assert "leak_scan.py" in workflow
+
+    def test_the_scan_is_clean(self):
+        """Nothing personal is in the repository.
+
+        The repository is public. A path with a user name in it says
+        whose machine the code was written on - and the first version
+        of the scan missed four such paths.
+        """
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "leak_scan.py")],
+            capture_output=True, text=True, timeout=120, cwd=str(ROOT))
+        assert result.returncode == 0, result.stdout
+        assert "clean" in result.stdout
 
 
 class TestTheEntryPoint:

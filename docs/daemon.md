@@ -91,8 +91,8 @@ to be right for that:
   not the key "Qwen3.5" with the value "9B".
 - **A list of mappings keeps every item.** Not only the last one.
 - **A Windows path is escaped.** A backslash is an escape character in
-  YAML, so `C:\Users\willow` has to be written as
-  `"C:\\Users\\willow"`. Without it PyYAML refuses the file.
+  YAML, so a path like `D:\Modelle` has to be written as
+  `"D:\\Modelle"`. Without it PyYAML refuses the file.
 
 ## Commands
 

@@ -18,7 +18,7 @@ card fails in a way that looks like a bug.
 ## The console command
 
 ```
-cd /c/Users/willow/Documents/Cpt_Mem0 && ./.venv/Scripts/python.exe scripts/verify_daemon.py --full --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf" --embedder-file "C:/Users/willow/.cache/huggingface/embed-models/nomic-embed-text-v1.5.Q4_K_M.gguf" --free-mib 10000
+cd <Pfad zum Repository> && ./.venv/Scripts/python.exe scripts/verify_daemon.py --full --model-file "<Modellverzeichnis>/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf" --embedder-file "<Modellverzeichnis>/huggingface/embed-models/nomic-embed-text-v1.5.Q4_K_M.gguf" --free-mib 10000
 ```
 
 ## What it writes
@@ -72,7 +72,7 @@ The catalogue ranks the models by extraction quality. That ranking has
 to come from a measurement.
 
 ```
-C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe C:/Users/willow/Documents/Cpt_Mem0/scripts/benchmark_extraction.py --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf" --embedder-file "C:/Users/willow/.cache/huggingface/embed-models/nomic-embed-text-v1.5.Q4_K_M.gguf" --free-mib 10000
+.venv/Scripts/python.exe scripts/benchmark_extraction.py --model-file "<Modellverzeichnis>/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf" --embedder-file "<Modellverzeichnis>/huggingface/embed-models/nomic-embed-text-v1.5.Q4_K_M.gguf" --free-mib 10000
 ```
 
 The corpus has 30 sentences: **24 unique facts** in four languages

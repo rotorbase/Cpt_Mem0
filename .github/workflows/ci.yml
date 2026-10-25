@@ -74,11 +74,9 @@ jobs:
         run: python -m cpt_mem0.cli validate-catalogue
 
       - name: Check that nothing personal is in the repository
-        shell: pwsh
-        run: |
-          $hits = Select-String -Path (Get-ChildItem -Recurse -File -Include *.py,*.md,*.json,*.yml,*.html,*.js,*.css | Where-Object { $_.FullName -notmatch "\\\.git\\|\\dist\\|\\build\\|\\\.venv\\" }) -Pattern "C:\\\\Users\\\\[a-z]+|/home/[a-z]+/|sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}" -AllMatches
-          if ($hits) {
-            $hits | ForEach-Object { Write-Host "$($_.Path):$($_.LineNumber): $($_.Line.Trim())" }
-            throw "there is something personal in the repository"
-          }
-          Write-Host "clean"
+        # The same script that runs locally. A scan that only exists
+        # in one place gets out of step - and the first version of
+        # this one missed four paths because it looked for C:/Users/
+        # while Windows writes C:\Users\.
+        run: python scripts/leak_scan.py
+

@@ -94,7 +94,7 @@ class TestConfigRoundTrip:
         an escape sequence, and PyYAML refuses the file."""
         config = Config()
         config.llm.model_file = Path(
-            r"C:\Users\willow\.cache\huggingface\model.gguf")
+            r"D:\Modelle\model.gguf")
 
         path = save_config(config, tmp_path / "config.yaml")
         loaded = load_config(path)
@@ -103,11 +103,11 @@ class TestConfigRoundTrip:
     def test_a_windows_path_is_valid_yaml(self, tmp_path):
         yaml = pytest.importorskip("yaml")
         config = Config()
-        config.llm.model_file = Path(r"C:\Users\willow\model.gguf")
+        config.llm.model_file = Path(r"D:\Modelle\model.gguf")
         path = save_config(config, tmp_path / "config.yaml")
         # PyYAML must be able to read what the writer produced.
         parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
-        assert parsed["llm"]["model_file"] == r"C:\Users\willow\model.gguf"
+        assert parsed["llm"]["model_file"] == r"D:\Modelle\model.gguf"
 
     def test_a_missing_file_gives_the_defaults(self, tmp_path):
         config = load_config(tmp_path / "nothing.yaml")
