@@ -169,7 +169,20 @@ class TestTheRoutes:
         assert "suspended" in data
         assert "gpu_used_mib" in data
 
-    def test_the_plan_lists_the_models(self, running):
+    def test_the_plan_lists_the_models(self, running, monkeypatch):
+        """The models that fit on the card.
+
+        The card is faked: the runner has no GPU, and the plan of a
+        machine without one is empty on purpose.
+        """
+        from cpt_mem0.planner import Hardware
+
+        monkeypatch.setattr(
+            "cpt_mem0.hardware.detect_hardware",
+            lambda: Hardware(total_vram_mib=12288,
+                             name="NVIDIA GeForce RTX 3060",
+                             vendor="nvidia"))
+
         status, body = self._get(running, "/plan")
         assert status == 200
         data = json.loads(body)
