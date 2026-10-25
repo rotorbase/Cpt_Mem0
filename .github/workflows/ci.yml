@@ -38,11 +38,21 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: The tests
+        shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path results | Out-Null
           python -m pytest tests/ -q --tb=short -ra 2>&1 |
             Tee-Object -FilePath results/pytest.txt
-          exit $LASTEXITCODE
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            # The log has to be readable from outside the runner.
+            # GitHub shows an annotation on the check run - and the
+            # annotation can be read without a token.
+            $tail = (Get-Content results/pytest.txt -Tail 60) -join "`n"
+            $tail = $tail -replace "%", "%25" -replace "`r", "" -replace "`n", "%0A"
+            Write-Host "::error title=The tests failed::$tail"
+          }
+          exit $code
 
       - name: Keep the test output
         # When the tests fail on the runner, the log has to be
