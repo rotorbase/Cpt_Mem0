@@ -75,19 +75,32 @@ to come from a measurement.
 C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe C:/Users/willow/Documents/Cpt_Mem0/scripts/benchmark_extraction.py --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf" --embedder-file "C:/Users/willow/.cache/huggingface/embed-models/nomic-embed-text-v1.5.Q4_K_M.gguf" --free-mib 10000
 ```
 
-The corpus has 22 sentences in four languages - 8 English, 8 German,
-3 Spanish, 3 French. They are neutral: no project, no person, nothing
-that identifies the user.
+The corpus has 30 sentences: **24 unique facts** in four languages
+(8 English, 8 German, 4 Spanish, 4 French) and **6 deliberate
+duplicates** - translations of English facts that the extractor has
+to recognise. They are neutral: no project, no person, nothing that
+identifies the user.
 
 **The metrics:**
 
 | Metric | What it means |
 |---|---|
-| `json_validity` | the answer is valid JSON in the format mem0 expects |
+| `extraction_rate` | of the new facts, how many produced a fact |
+| `dedup_precision` | of the duplicates, how many produced **nothing** |
+| `false_empty` | new facts that produced nothing - a real failure |
+| `false_duplicate` | duplicates that produced a fact - a real failure |
 | `atomicity` | one fact per entry, not a paragraph |
 | `recall` | the fact is found again by a search - in the top three |
-| `empty_rate` | the model extracted nothing |
+| `recall_same_language` | the question and the fact in the same language |
+| `recall_cross_language` | the question in one language, the fact in another |
 | `language_fidelity` | the answer is in the language of the input |
+
+**Why the duplicates are there.** The first version of the corpus
+had every non-English sentence as a translation of an English one
+and counted an empty result as a failure. The model had deduplicated
+all fourteen translations perfectly, and the metric called it a 64 %
+failure rate. A service that stores the same fact three times in
+three languages is worse than one that misses a fact.
 
 The recall check needs the embedder: a fact that cannot be found
 again is a fact the service does not have.
@@ -98,10 +111,13 @@ again is a fact the service does not have.
 |---|---|
 | `results/extraction-benchmark.log` | every sentence, every extracted fact, every recall |
 | `results/extraction-benchmark.json` | the summary and the server measurements |
+| `results/llm-benchmark.log` | the server log of the LLM |
+| `results/embedder-benchmark.log` | the server log of the embedder |
 
-**The expected duration:** 22 sentences with the extraction and the
+**The expected duration:** 30 sentences with the extraction and the
 recall. The first extraction costs about 6 s (8224 prompt tokens),
 the later ones about 2 s each because the prompt is cached. The
+duplicates are faster - the model sees them and answers at once. The
 recall is instant - it is a vector comparison, no LLM call.
 
 ## The catalog update

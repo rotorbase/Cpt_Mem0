@@ -883,3 +883,67 @@ Both servers were stopped cleanly.
 
 **The whole run took 17 seconds**, including loading both models.
 
+## The first extraction benchmark — 25.10.2026, 09:00
+
+The benchmark ran, but **the benchmark was wrong, not the model.**
+
+```json
+{"sentences": 22, "json_validity": 0.3636, "recall": 0.3182,
+ "empty_rate": 0.6364, "language_fidelity": 0.8750,
+ "facts_stored": 8}
+```
+
+**What the log shows:**
+
+| Sentences | Language | Facts | Time |
+|---|---|---|---|
+| 1–8 | English | 1 each | 2.0–5.9 s |
+| 9–22 | German, Spanish, French | **0 each** | 0.6 s each |
+
+**The cause:** the corpus had every non-English sentence as a
+translation of an English one. Sentences 9–16 were the German
+translations of sentences 1–8, 17–19 the Spanish of 1–3, 20–22 the
+French of 1–3.
+
+The extraction prompt asks the model to deduplicate:
+
+> "This is your primary deduplication reference — do not re-extract
+> information already captured here."
+
+The model did exactly that: 8 unique facts stored, 14 translations
+recognised and suppressed. The `empty_rate` metric counted the
+correct behaviour as a 64 % failure rate.
+
+**This is a good result, measured wrongly.** A service that stores
+the same fact three times in three languages is worse than one that
+misses a fact: the store fills with repetitions and every search
+returns near-duplicates.
+
+**The corpus is now built differently:**
+
+| | Count |
+|---|---|
+| unique English facts | 8 |
+| unique German facts | 8 (different content, not translations) |
+| unique Spanish facts | 4 |
+| unique French facts | 4 |
+| deliberate duplicates (cross-language) | 6 |
+
+**The metrics are split apart:**
+
+| Metric | What it means |
+|---|---|
+| `extraction_rate` | of the new facts, how many produced a fact |
+| `dedup_precision` | of the duplicates, how many produced **nothing** |
+| `false_empty` | new facts that produced nothing — a real failure |
+| `false_duplicate` | duplicates that produced a fact — a real failure |
+| `recall_same_language` | the question and the fact in the same language |
+| `recall_cross_language` | the question in one language, the fact in another |
+
+The cross-language recall is the interesting one: it says whether a
+German question finds a fact that was stored in English.
+
+**Also fixed:** the first version deleted the server logs together
+with the work directory. The logs are the evidence for the buffer
+lines, so they are now copied next to the result file.
+
