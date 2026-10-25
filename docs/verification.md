@@ -833,3 +833,53 @@ display driver (WDDM), not by the NVIDIA driver. The GPU proof
 therefore comes from the server log, which reports the device, the
 number of layers on the GPU and the size of every buffer.
 
+## The full daemon run — 25.10.2026, 08:56
+
+The run after the reasoning fix. **Everything worked.**
+
+```json
+{"mode": "full", "problems": [], "embedder_dimensions": 768,
+ "collection_dimensions": 768, "memories": 3}
+```
+
+**Both servers on the GPU, read from the server logs:**
+
+| | Embedder | LLM (Qwen3.5-9B Q8_0) |
+|---|---|---|
+| device | CUDA0 | CUDA0 |
+| layers on the GPU | 13 / 13 | 33 / 33 |
+| weights | 66.92 MiB | 8045.05 MiB |
+| CPU mapped (host RAM) | 12.58 MiB | 1030.62 MiB |
+| KV buffer | — | 1045.50 MiB |
+| recurrent state | — | 100.50 MiB |
+| compute buffer | 24.51 MiB | 371.79 MiB |
+
+**The extraction, through the real LLM:**
+
+| Input | Facts | Time |
+|---|---|---|
+| "The user rides a bicycle to the office every day." | 1 | 6 s |
+| "The build server has 64 GB of RAM." | 1 | 2 s |
+| "The coffee machine in the office is fully automatic." | 1 | 2 s |
+
+**The recall, through the real embedder:** every question found the
+right fact first, in 0 s each. The search is a pure embedding plus a
+vector comparison - no LLM call, which is why it is instant.
+
+**Why the first extraction took 6 s and the others 2 s:** the first
+one processed **8224 prompt tokens** (the extraction prompt plus the
+memories stored so far), the later ones only 120 and 155. The prompt
+is cached, so the second and third call are fast.
+
+That 8224-token figure is exactly the context floor from §4.7: below
+it, mem0 cannot extract at all. The measured run confirms the floor
+from the other side.
+
+**Measured generation speed:** 34.39 tokens per second. That is GPU
+speed - the CPU fallback is around 6.
+
+**The VRAM came back:** 1021 MiB before the run, 1021 MiB after it.
+Both servers were stopped cleanly.
+
+**The whole run took 17 seconds**, including loading both models.
+

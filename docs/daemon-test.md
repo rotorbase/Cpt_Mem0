@@ -65,3 +65,52 @@ layers went to the GPU and how big each buffer is.
 
 That is also why the servers always run with `--verbose`: without it
 the buffer lines are not printed at all.
+
+## The extraction benchmark
+
+The catalogue ranks the models by extraction quality. That ranking has
+to come from a measurement.
+
+```
+C:/Users/willow/Documents/Cpt_Mem0/.venv/Scripts/python.exe C:/Users/willow/Documents/Cpt_Mem0/scripts/benchmark_extraction.py --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf" --embedder-file "C:/Users/willow/.cache/huggingface/embed-models/nomic-embed-text-v1.5.Q4_K_M.gguf" --free-mib 10000
+```
+
+The corpus has 22 sentences in four languages - 8 English, 8 German,
+3 Spanish, 3 French. They are neutral: no project, no person, nothing
+that identifies the user.
+
+**The metrics:**
+
+| Metric | What it means |
+|---|---|
+| `json_validity` | the answer is valid JSON in the format mem0 expects |
+| `atomicity` | one fact per entry, not a paragraph |
+| `recall` | the fact is found again by a search - in the top three |
+| `empty_rate` | the model extracted nothing |
+| `language_fidelity` | the answer is in the language of the input |
+
+The recall check needs the embedder: a fact that cannot be found
+again is a fact the service does not have.
+
+**The files:**
+
+| File | What is in it |
+|---|---|
+| `results/extraction-benchmark.log` | every sentence, every extracted fact, every recall |
+| `results/extraction-benchmark.json` | the summary and the server measurements |
+
+**The expected duration:** 22 sentences with the extraction and the
+recall. The first extraction costs about 6 s (8224 prompt tokens),
+the later ones about 2 s each because the prompt is cached. The
+recall is instant - it is a vector comparison, no LLM call.
+
+## The catalog update
+
+The benchmark result goes into `catalogue.json` as the
+`extraction` measurement of the model. That is what makes the
+ranking measured instead of assumed.
+
+The corpus is small on purpose: it is a first measurement, not a
+benchmark suite. A model with a bad `recall` is out. A model with a
+good `recall` still has to be measured against the others before the
+ranking means anything.
