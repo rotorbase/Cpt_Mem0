@@ -567,6 +567,55 @@ class TestGpuPlacementWarning:
 
 
 # ----------------------------------------------------------------------
+# the VRAM guard
+# ----------------------------------------------------------------------
+
+class TestVramGuard:
+    """The full run must not start into a full card.
+
+    A run that starts into a full card fails in a way that looks
+    like a bug: the model does not fit, llama.cpp offloads less than
+    planned, and the result looks like a planning error.
+    """
+
+    def test_the_free_vram_is_read(self):
+        from cpt_mem0.supervisor import gpu_free_mib
+
+        # The function exists and returns a number or None. It never
+        # raises.
+        value = gpu_free_mib()
+        assert value is None or value >= 0
+
+    def test_the_script_has_the_guard(self):
+        """The check comes before the servers start."""
+        script = (Path(__file__).resolve().parent.parent
+                  / "scripts" / "verify_daemon.py")
+        text = script.read_text(encoding="utf-8")
+
+        assert "--free-mib" in text
+        assert "gpu_free_mib" in text
+
+        # The VRAM check is before the first start.
+        guard = text.index("gpu_free_mib()")
+        first_start = text.index("supervisor.start(spec.name")
+        assert guard < first_start
+
+    def test_the_script_writes_a_log_file(self):
+        script = (Path(__file__).resolve().parent.parent
+                  / "scripts" / "verify_daemon.py")
+        text = script.read_text(encoding="utf-8")
+        assert "--log" in text
+        assert "daemon-verification.log" in text
+
+    def test_the_script_copies_the_server_logs(self):
+        """The server logs are the evidence for the buffer lines."""
+        script = (Path(__file__).resolve().parent.parent
+                  / "scripts" / "verify_daemon.py")
+        text = script.read_text(encoding="utf-8")
+        assert "shutil.copyfile" in text
+
+
+# ----------------------------------------------------------------------
 # the API
 # ----------------------------------------------------------------------
 

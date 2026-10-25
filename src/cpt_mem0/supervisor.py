@@ -345,6 +345,32 @@ def gpu_used_mib() -> int | None:
         return None
 
 
+def gpu_free_mib() -> int | None:
+    """The VRAM still free on the card.
+
+    This is the number that decides whether a run fits. A run that
+    starts into a full card fails in a way that looks like a bug, so
+    the check comes before the start.
+    """
+    import shutil
+
+    exe = shutil.which("nvidia-smi")
+    if exe is None:
+        return None
+    try:
+        result = subprocess.run(
+            [exe, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=15)
+    except (OSError, ValueError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return int(float(result.stdout.strip().splitlines()[0]))
+    except (ValueError, IndexError):
+        return None
+
+
 def process_vram_mib(pid: int) -> int | None:
     """The VRAM of one process.
 

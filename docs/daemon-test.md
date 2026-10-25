@@ -1,0 +1,67 @@
+# The daemon test
+
+Two verifications, both against the real thing. The first uses stub
+endpoints for the LLM and the embedder, the second starts real
+llama-server processes.
+
+| Script | What it proves | GPU |
+|---|---|---|
+| `scripts/verify_engine.py` | the mem0 integration: the store, the lock, the dimension count | none |
+| `scripts/verify_daemon.py --embedder-only` | llama.cpp serves the embeddings the way mem0 expects | ~420 MiB |
+| `scripts/verify_daemon.py --full` | the whole thing: the LLM extracts, the embedder stores, the search finds | the whole card |
+
+**The full run needs the card.** Close everything that uses the GPU
+first - the script measures the free VRAM before it starts and refuses
+to run when there is not enough room. A run that starts into a full
+card fails in a way that looks like a bug.
+
+## The console command
+
+```
+cd /c/Users/willow/Documents/Cpt_Mem0 && ./.venv/Scripts/python.exe scripts/verify_daemon.py --full --model-file "C:/Users/willow/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/snapshots/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q8_0.gguf" --embedder-file "C:/Users/willow/.cache/huggingface/embed-models/nomic-embed-text-v1.5.Q4_K_M.gguf" --free-mib 10000
+```
+
+## What it writes
+
+| File | What is in it |
+|---|---|
+| `results/daemon-verification.log` | everything the run printed, in order |
+| `results/daemon-verification.json` | the measurements: the buffers, the dimensions, the facts |
+| `results/llm-server.log` | the server log of the LLM |
+| `results/embedder-server.log` | the server log of the embedder |
+
+The console and the log file get the same lines. The file is the
+evidence - the console scrolls away.
+
+## The exit codes
+
+| Code | What it means |
+|---|---|
+| 0 | everything worked |
+| 1 | something did not work - the PROBLEMS section says what |
+| 2 | a file is missing: the model, the embedder or the runtime |
+| 3 | not enough VRAM - the run did not start |
+
+## What the full run checks
+
+1. **Both servers come up.** The embedder first, then the LLM. Both
+   stay resident at the same time - that is what the app does.
+2. **Both are on the GPU.** From the server log: the device, the
+   number of layers on the GPU, and the size of each buffer.
+3. **The embedder answers** with 768 dimensions.
+4. **The store opens** with the right dimension count and takes the
+   exclusive lock.
+5. **The LLM extracts** three facts from three sentences.
+6. **The search finds them** again - three different questions.
+7. **The store is closed** and the path is free again.
+
+## Why the log and not nvidia-smi
+
+The per-process reading from `nvidia-smi` returns N/A for every
+process on Windows with the WDDM driver - the card is managed by the
+display driver there, not by the NVIDIA driver. The server log has the
+truth on every system: it says which device the server uses, how many
+layers went to the GPU and how big each buffer is.
+
+That is also why the servers always run with `--verbose`: without it
+the buffer lines are not printed at all.
