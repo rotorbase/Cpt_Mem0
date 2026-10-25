@@ -253,6 +253,10 @@ class FakeMemory:
         self.memories = []
         self.vector_store = type("Store", (), {"client": None})()
         self.last_search = None
+        self.last_get_all = None
+        self.last_update = None
+        self.last_delete_all = None
+        self.was_reset = False
 
     def add(self, text, **kwargs):
         self.memories.append({"memory": text, **kwargs})
@@ -270,7 +274,22 @@ class FakeMemory:
         return {"results": list(self.memories)}
 
     def get_all(self, **kwargs):
+        self.last_get_all = kwargs
         return {"results": list(self.memories)}
+
+    def update(self, memory_id=None, text=None, **kwargs):
+        self.last_update = (memory_id, text)
+        return {"message": "Memory updated successfully!"}
+
+    def delete_all(self, user_id=None, **kwargs):
+        self.last_delete_all = user_id
+        self.memories = []
+        return {"message": "deleted"}
+
+    def reset(self):
+        self.was_reset = True
+        self.memories = []
+        return None
 
     def delete(self, memory_id):
         return {"deleted": memory_id}
@@ -714,12 +733,16 @@ class TestApi:
 
 class TestMcpTools:
     def test_the_tools_are_the_specified_ones(self, tmp_path):
+        """SPEC 12.1: the convenience tools are remember and recall,
+        the raw ones are memory_add, memory_search, memory_list,
+        memory_update, memory_delete."""
         engine = Engine(llama_endpoint(8766, "m"),
                         llama_endpoint(8767, "e"), tmp_path / "store")
         engine._memory = FakeMemory()
         tools = mcp_tools(MemoryService(engine))
         names = {tool["name"] for tool in tools}
-        assert names == {"remember", "recall"}
+        assert {"remember", "recall"} <= names
+        assert {"memory_list", "memory_update", "memory_delete"} <= names
 
     def test_every_tool_has_a_schema(self, tmp_path):
         engine = Engine(llama_endpoint(8766, "m"),
@@ -738,8 +761,106 @@ class TestApiKey:
         assert key != generate_api_key()
 
 
+class _StubDaemon:
+    """The smallest daemon the handler needs."""
+
+    def __init__(self):
+        from cpt_mem0.config import Config
+
+        self.config = Config()
+        self.config.server.port = 0
+        self.service = None
+
+
 def _engine_with_fake(tmp_path):
     engine = Engine(llama_endpoint(8766, "m"), llama_endpoint(8767, "e"),
                     tmp_path / "store")
     engine._memory = FakeMemory()
     return engine
+
+
+class TestFindableAndDeletable:
+    """Everything has to be findable and deletable.
+
+    That is the requirement for the finished app: every stored memory
+    can be found again, changed and deleted - and none of it is
+    silently truncated.
+    """
+
+    def test_the_list_is_not_capped(self):
+        """mem0's get_all has a default of top_k=20. A store with 25
+        memories would silently return 20 of them, and the rest would
+        be unfindable."""
+        from cpt_mem0.engine import LIST_LIMIT
+
+        assert LIST_LIMIT > 20
+
+    def test_the_engine_asks_for_everything(self):
+        engine = Engine(llama_endpoint(8766, "m"),
+                         llama_endpoint(8767, "e"), Path("/tmp/store"))
+        memory = FakeMemory()
+        memory.last_get_all = None
+        engine._memory = memory
+
+        engine.all()
+        assert memory.last_get_all is not None
+        assert memory.last_get_all["top_k"] > 20
+
+    def test_the_update_changes_the_memory(self, tmp_path):
+        engine = Engine(llama_endpoint(8766, "m"),
+                        llama_endpoint(8767, "e"), tmp_path / "store")
+        memory = FakeMemory()
+        engine._memory = memory
+
+        engine.update("abc", "The new text.")
+        assert memory.last_update == ("abc", "The new text.")
+
+    def test_an_empty_update_is_refused(self, tmp_path):
+        engine = Engine(llama_endpoint(8766, "m"),
+                        llama_endpoint(8767, "e"), tmp_path / "store")
+        engine._memory = FakeMemory()
+        with pytest.raises(EngineError):
+            engine.update("abc", "   ")
+
+    def test_delete_all_uses_the_user_id(self, tmp_path):
+        engine = Engine(llama_endpoint(8766, "m"),
+                        llama_endpoint(8767, "e"), tmp_path / "store",
+                        user_id="willow")
+        memory = FakeMemory()
+        engine._memory = memory
+
+        engine.delete_all()
+        assert memory.last_delete_all == "willow"
+
+    def test_reset_is_possible(self, tmp_path):
+        engine = Engine(llama_endpoint(8766, "m"),
+                        llama_endpoint(8767, "e"), tmp_path / "store")
+        memory = FakeMemory()
+        engine._memory = memory
+
+        result = engine.reset()
+        assert result["reset"] is True
+        assert memory.was_reset is True
+
+
+class TestTheApiRoutes:
+    """The routes that make everything findable and deletable."""
+
+    def test_the_routes_are_registered(self):
+        """The HTTP handler has to know them."""
+        from cpt_mem0.daemon import _make_handler
+
+        handler = _make_handler(_StubDaemon())
+        for method in ("GET", "POST", "PATCH", "DELETE"):
+            assert hasattr(handler, f"do_{method}")
+
+    def test_the_mcp_tools_cover_the_crud(self):
+        """SPEC 12.1: the raw tools are memory_add, memory_search,
+        memory_list, memory_update, memory_delete."""
+        engine = Engine(llama_endpoint(8766, "m"),
+                        llama_endpoint(8767, "e"), Path("/tmp/store"))
+        engine._memory = FakeMemory()
+        names = {tool["name"]
+                 for tool in mcp_tools(MemoryService(engine))}
+        assert {"remember", "recall", "memory_list", "memory_update",
+                "memory_delete"} <= names

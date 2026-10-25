@@ -40,6 +40,19 @@ from cpt_mem0.engine import Engine, llama_endpoint  # noqa: E402
 DIMENSIONS = 768
 
 
+#: The texts the stub recognises in the extraction prompt.
+#:
+#: The stub has to answer with the text that was stored, and the
+#: extraction prompt wraps the input into a longer instruction. The
+#: stub therefore looks for the known texts in the prompt and answers
+#: with the one it finds.
+#:
+#: Without this the stub always answers with the same fact, mem0
+#: deduplicates all the calls, and a test of "everything is findable"
+#: sees one memory instead of twenty-five.
+KNOWN_INPUTS: list[str] = []
+
+
 class StubHandler(BaseHTTPRequestHandler):
     """A stub for the two OpenAI-compatible endpoints.
 
@@ -89,11 +102,20 @@ class StubHandler(BaseHTTPRequestHandler):
             return
 
         if "chat/completions" in self.path:
+            # Only the user message carries the new input. The system
+            # message is the extraction instruction, and it has a
+            # "## New Messages" section of its own - with the
+            # description of the roles.
+            prompt = ""
+            for message in request.get("messages", []):
+                if message.get("role") == "user":
+                    prompt = str(message.get("content", ""))
+                    break
             self._send({
                 "choices": [{
                     "index": 0,
                     "message": {"role": "assistant",
-                                "content": _fact()},
+                                "content": _fact(prompt)},
                     "finish_reason": "stop",
                 }],
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5},
@@ -101,7 +123,7 @@ class StubHandler(BaseHTTPRequestHandler):
             return
 
         if "completions" in self.path:
-            self._send({"content": _fact()})
+            self._send({"content": _fact(str(request))})
             return
 
         self._send({})
@@ -118,7 +140,49 @@ def _vector(text: str) -> list[float]:
             for index in range(DIMENSIONS)]
 
 
-def _fact() -> str:
+def _new_messages(prompt: str) -> str:
+    """The new message from the extraction prompt.
+
+    The prompt has a section with the new messages:
+
+        ## New Messages
+        user: Fact number 7 about the system.
+
+        ## Observation Date
+        2026-10-25
+
+    **Only that section.** The rest of the prompt grows with every
+    stored memory - the "Existing Memories" section lists all of
+    them. A search over the whole prompt finds the first memory that
+    happens to be known, not the new message, and the stub answers
+    with a fact that was stored long ago.
+    """
+    marker = "## New Messages"
+    index = prompt.find(marker)
+    if index < 0:
+        return ""
+
+    rest = prompt[index + len(marker):]
+    # The section ends at the next heading.
+    end = rest.find("\n## ")
+    if end >= 0:
+        rest = rest[:end]
+
+    lines = []
+    for line in rest.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("user:"):
+            line = line[len("user:"):].strip()
+        elif line.startswith("assistant:"):
+            line = line[len("assistant:"):].strip()
+        if line:
+            lines.append(line)
+    return " ".join(lines)
+
+
+def _fact(prompt: str = "") -> str:
     """The fact the stub LLM extracts.
 
     The format is measured on mem0 2.2.1: the answer is a JSON
@@ -130,13 +194,31 @@ def _fact() -> str:
     The extraction prompt asks for these fields:
 
         {"memory": [{"id": "0", "text": "the fact"}]}
+
+    **The fact is the new message.** The stub reads the "## New
+    Messages" section and answers with it. Without that the stub
+    always answers with the same fact, mem0 deduplicates every call
+    through its hash check, and a test of "everything is findable"
+    sees one memory instead of twenty-five.
     """
+    text = _new_messages(prompt)
+
+    if not text:
+        # The section was not found. Fall back to the known inputs.
+        for known in KNOWN_INPUTS:
+            if known in prompt:
+                text = known
+                break
+
+    if not text:
+        text = "The user rides a bicycle to the office every day."
+
     return json.dumps({
         "memory": [{
             "id": "0",
-            "text": "The user rides a bicycle to the office every day.",
+            "text": text,
             "event": "ADD",
-            "memory": "The user rides a bicycle to the office every day.",
+            "memory": text,
         }],
     })
 
@@ -225,6 +307,66 @@ def main() -> int:
                 problems.append(
                     f"the collection has {size} dimensions, expected "
                     f"{DIMENSIONS}")
+
+        # Everything has to be findable and deletable. That is the
+        # requirement for the finished app.
+        print("\n--- findable: everything is listed ---", flush=True)
+        KNOWN_INPUTS.clear()
+        KNOWN_INPUTS.append("The user rides a bicycle to the office every day.")
+        for index in range(25):
+            KNOWN_INPUTS.append(f"Fact number {index} about the system.")
+        for index in range(25):
+            engine.remember(f"Fact number {index} about the system.")
+        everything = engine.all()
+        print(f"  {len(everything)} memories in the store", flush=True)
+        if len(everything) < 26:
+            problems.append(
+                f"the list returned {len(everything)} memories, 26 were "
+                f"stored - mem0's default top_k of 20 truncates the list "
+                f"silently")
+        else:
+            print("  the list is not truncated", flush=True)
+
+        print("\n--- findable: every memory has an id ---", flush=True)
+        without_id = [item for item in everything
+                      if not (item.get("id") or item.get("memory_id"))]
+        if without_id:
+            problems.append(
+                f"{len(without_id)} memories have no id - they cannot be "
+                f"updated or deleted")
+        else:
+            print("  every memory carries an id", flush=True)
+
+        print("\n--- deletable: one memory ---", flush=True)
+        first = everything[0]
+        memory_id = first.get("id") or first.get("memory_id")
+        engine.delete(memory_id)
+        after = engine.all()
+        print(f"  {len(after)} memories left", flush=True)
+        if len(after) != len(everything) - 1:
+            problems.append(
+                f"the delete left {len(after)} memories, "
+                f"{len(everything) - 1} were expected")
+
+        print("\n--- deletable: one memory, changed ---", flush=True)
+        second = after[0]
+        second_id = second.get("id") or second.get("memory_id")
+        engine.update(second_id, "The changed fact.")
+        changed = [item for item in engine.all()
+                    if (item.get("id") or item.get("memory_id")) == second_id]
+        if not changed or "changed fact" not in str(changed[0].get("memory")):
+            problems.append(
+                "the update did not change the memory")
+        else:
+            print("  the memory was changed in place", flush=True)
+
+        print("\n--- deletable: all of one user ---", flush=True)
+        engine.delete_all("willow")
+        left = engine.all()
+        print(f"  {len(left)} memories left", flush=True)
+        if left:
+            problems.append(
+                f"the delete_all left {len(left)} memories behind")
 
         print("\n--- closing the store ---", flush=True)
         engine.close()

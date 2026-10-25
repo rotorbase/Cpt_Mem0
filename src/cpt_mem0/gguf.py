@@ -215,9 +215,10 @@ def _quantisation_from_name(name: str) -> str | None:
 
     Only used as a label; the authoritative size comes from the file.
     """
-    for tag in ("Q8_0", "Q6_K", "Q5_K_M", "Q5_K_S", "Q4_K_M", "Q4_K_S", "Q4_0",
-                "Q3_K_M", "Q3_K_S", "Q2_K", "IQ4_XS", "IQ4_NL", "IQ3_XXS",
-                "IQ3_XS", "IQ3_XX", "IQ2_XXS", "F16", "BF16"):
+    for tag in ("Q8_0", "Q6_K", "Q5_K_M", "Q5_K_S", "Q5_K_XL", "Q4_K_M",
+                "Q4_K_S", "Q4_K_XL", "Q4_0", "Q3_K_M", "Q3_K_S", "Q2_K",
+                "IQ4_XS", "IQ4_NL", "IQ4_XL", "IQ3_XXS", "IQ3_XS", "IQ3_XX",
+                "IQ2_XXS", "F16", "BF16"):
         if tag in name:
             return tag
     return None

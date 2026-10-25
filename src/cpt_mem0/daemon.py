@@ -107,6 +107,36 @@ class MemoryService:
             raise ApiError("the memory id is empty")
         return {"ok": True, "deleted": memory_id}
 
+    def update(self, memory_id: str, text: str) -> dict[str, Any]:
+        """Change the content of one memory.
+
+        A memory that is wrong has to be fixable. Deleting it and
+        storing it again would give it a new id, and every client
+        that holds the old one loses it.
+        """
+        if not memory_id:
+            raise ApiError("the memory id is empty")
+        if not text or not text.strip():
+            raise ApiError("the new text is empty")
+        self.engine.update(memory_id, text)
+        return {"ok": True, "updated": memory_id, "text": text}
+
+    def delete_all(self, user_id: str | None = None) -> dict[str, Any]:
+        """Delete every memory of one user."""
+        result = self.engine.delete_all(user_id)
+        return {"ok": True, "deleted_all_for":
+                user_id or self.engine.user_id, "result": result}
+
+    def reset(self) -> dict[str, Any]:
+        """Delete absolutely everything.
+
+        This is the whole store, not one user. It is a separate
+        operation on purpose: "delete my memories" and "wipe the
+        service" are different requests.
+        """
+        self.engine.reset()
+        return {"ok": True, "reset": True}
+
 
 def _count_of(result: dict[str, Any]) -> int:
     """How many memories a write produced."""
@@ -470,12 +500,44 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     self._send(200, service.recall(query, user, limit))
                     return
 
+                if path == "/memories/reset":
+                    # The whole store, not one user. It is a separate
+                    # operation on purpose.
+                    self._send(200, service.reset())
+                    return
+
                 if path.startswith("/memories/"):
                     memory_id = path.rsplit("/", 1)[-1]
                     self._send(200, service.delete(memory_id))
                     return
 
+                if path in ("/memories", "/v1/memories"):
+                    # Every memory of one user.
+                    user = body.get("user_id")
+                    self._send(200, service.delete_all(user))
+                    return
+
                 self._send(404, {"ok": False, "error": "not found"})
+            except ApiError as exc:
+                self._send(exc.status, {"ok": False, "error": exc.message})
+            except EngineError as exc:
+                self._send(503, {"ok": False, "error": str(exc)})
+            except Exception as exc:
+                self._send(500, {"ok": False,
+                                 "error": f"{type(exc).__name__}: {exc}"})
+
+        def do_PATCH(self) -> None:  # noqa: N802
+            """Change the content of one memory."""
+            parsed = urllib.parse.urlparse(self.path)
+            path = parsed.path
+            try:
+                if not self._authorised():
+                    self._send(401, {"ok": False, "error": "unauthorised"})
+                    return
+                body = self._read_body()
+                memory_id = path.rsplit("/", 1)[-1]
+                text = str(body.get("text") or body.get("memory") or "")
+                self._send(200, self._service().update(memory_id, text))
             except ApiError as exc:
                 self._send(exc.status, {"ok": False, "error": exc.message})
             except EngineError as exc:
@@ -490,6 +552,12 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
             try:
                 if not self._authorised():
                     self._send(401, {"ok": False, "error": "unauthorised"})
+                    return
+                if path == "/memories/reset":
+                    self._send(200, self._service().reset())
+                    return
+                if path in ("/memories", "/v1/memories"):
+                    self._send(200, self._service().delete_all())
                     return
                 memory_id = path.rsplit("/", 1)[-1]
                 self._send(200, self._service().delete(memory_id))
@@ -550,6 +618,62 @@ def mcp_tools(service: MemoryService) -> list[dict[str, Any]]:
             "handler": lambda args: service.recall(
                 str(args.get("query", "")), args.get("user_id"),
                 int(args.get("limit", 5))),
+        },
+        {
+            "name": "memory_list",
+            "description": "List every stored fact of a user.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string",
+                                "description": "Whose facts to list."},
+                },
+            },
+            "handler": lambda args: service.list_all(args.get("user_id")),
+        },
+        {
+            "name": "memory_update",
+            "description": "Change the content of one stored fact.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "memory_id": {"type": "string",
+                                  "description": "The id of the fact."},
+                    "text": {"type": "string",
+                             "description": "The new content."},
+                },
+                "required": ["memory_id", "text"],
+            },
+            "handler": lambda args: service.update(
+                str(args.get("memory_id", "")),
+                str(args.get("text", ""))),
+        },
+        {
+            "name": "memory_delete",
+            "description": "Delete one stored fact.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "memory_id": {"type": "string",
+                                  "description": "The id of the fact."},
+                },
+                "required": ["memory_id"],
+            },
+            "handler": lambda args: service.delete(
+                str(args.get("memory_id", ""))),
+        },
+        {
+            "name": "memory_delete_all",
+            "description": "Delete every stored fact of a user.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string",
+                                "description": "Whose facts to delete."},
+                },
+            },
+            "handler": lambda args: service.delete_all(
+                args.get("user_id")),
         },
     ]
 

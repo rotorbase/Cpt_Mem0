@@ -191,7 +191,24 @@ def find_llama_server() -> Path | None:
     return None
 
 
-def planned_flags() -> list[str]:
+#: The context the benchmark uses when the planner cannot plan the
+#: model - a model with an unmeasured KV constant, for example.
+#:
+#: It has to be above the context floor: mem0's extraction prompt
+#: needs about 8200 tokens on the first call, and below the floor the
+#: extraction does not work at all.
+FALLBACK_CONTEXT = 16384
+
+
+def planned_flags(model_id: str = "Qwen3.5-9B",
+                  quantisation: str | None = None) -> tuple[list[str], str]:
+    """The flags for the model, and where they came from.
+
+    The planner decides the flags when it can plan the model. A model
+    with an unmeasured KV constant - gemma-4-E2B-it, for example -
+    cannot be planned, and the benchmark uses a fixed context instead.
+    The reason is returned so the log says which path was taken.
+    """
     from cpt_mem0.catalogue import load_catalogue
     from cpt_mem0.planner import (
         Hardware,
@@ -203,18 +220,61 @@ def planned_flags() -> list[str]:
     hardware = Hardware(total_vram_mib=12288,
                         name="NVIDIA GeForce RTX 3060", vendor="nvidia")
     for entry in catalogue.sorted_entries():
-        if entry.model_id != "Qwen3.5-9B":
+        if entry.model_id != model_id:
             continue
         result = plan_for_hardware(
             hardware, [entry],
             PlannerConfig(embedder_backends=("llamacpp",)))
         if result.viable and result.candidate is not None:
-            return result.candidate.as_flags()
-    return ["-c", "67072", "--parallel", "2", "-ngl", "99",
+            candidate = result.candidate
+            if quantisation and candidate.quantisation != quantisation:
+                continue
+            return candidate.as_flags(), "planner"
+
+    # The model cannot be planned - the KV constant is not measured.
+    # The benchmark measures it instead.
+    return ["-c", str(FALLBACK_CONTEXT), "--parallel", "2", "-ngl", "99",
             "--fit", "off", "--flash-attn", "on",
             "--reasoning", "off", "--no-context-shift",
             "--kv-unified", "--cache-type-k", "q8_0",
-            "--cache-type-v", "q8_0"]
+            "--cache-type-v", "q8_0"], "fallback"
+
+
+def _calibrate_kv(buffers: dict, flags: list[str]) -> dict | None:
+    """The KV constant from what the server reported.
+
+    The catalogue carries a measured constant for most models. For a
+    model with a sliding window and shared KV layers - gemma-4-E2B-it
+    - the closed form does not apply, and the constant has to come
+    from a measurement.
+
+    The server log reports the size of the KV buffer and the server
+    knows how many tokens it holds. The bytes per token are the two
+    divided by each other.
+    """
+    kv_mib = buffers.get("kv_mib")
+    if not kv_mib:
+        return None
+
+    n_ctx = None
+    if "-c" in flags:
+        index = flags.index("-c")
+        if index + 1 < len(flags):
+            try:
+                n_ctx = int(flags[index + 1])
+            except ValueError:
+                n_ctx = None
+    if not n_ctx:
+        return None
+
+    # The buffer is per slot, and the slots share the pool.
+    bytes_per_token = int(kv_mib * 1024 * 1024 / n_ctx)
+    return {
+        "kv_mib": kv_mib,
+        "n_ctx": n_ctx,
+        "kv_bytes_per_token": bytes_per_token,
+        "source": "measured",
+    }
 
 
 def atomic(text: str) -> bool:
@@ -262,6 +322,11 @@ def language_of(text: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-file", required=True)
+    parser.add_argument("--model-id", default="Qwen3.5-9B",
+                        help="the model id from the catalogue")
+    parser.add_argument("--quantisation", default=None,
+                        help="the quantisation, when the catalogue "
+                             "has more than one")
     parser.add_argument("--embedder-file", default=str(DEFAULT_EMBEDDER))
     parser.add_argument("--llm-port", type=int, default=8766)
     parser.add_argument("--embedder-port", type=int, default=8767)
@@ -302,6 +367,12 @@ def main() -> int:
                 f"not enough VRAM: {free} MiB free, {args.free_mib} needed")
             return 3
 
+        flags, source = planned_flags(args.model_id, args.quantisation)
+        results["llm_flags"] = flags
+        results["llm_flag_source"] = source
+        results["model_id"] = args.model_id
+        log.write(f"  flags from the {source}")
+
         workdir = Path(tempfile.mkdtemp(prefix="cpt-mem0-bench-"))
         specs = [
             ServerSpec(name="embedder", binary=binary,
@@ -311,7 +382,7 @@ def main() -> int:
                        log_path=workdir / "embedder.log"),
             ServerSpec(name="llm", binary=binary,
                        model=Path(args.model_file), port=args.llm_port,
-                       flags=planned_flags(),
+                       flags=flags,
                        log_path=workdir / "llm.log"),
         ]
 
@@ -325,6 +396,20 @@ def main() -> int:
                           f"layers {buffers['offloaded_layers']}/"
                           f"{buffers['total_layers']}")
                 results.setdefault("servers", {})[spec.name] = buffers
+
+                # The KV constant of a model that the planner cannot
+                # plan. The server log knows how big the cache is and
+                # how many tokens it holds, and that gives the bytes
+                # per token.
+                if spec.name == "llm":
+                    calibration = _calibrate_kv(buffers, flags)
+                    if calibration:
+                        results["kv_calibration"] = calibration
+                        log.write(f"  KV calibration: "
+                                  f"{calibration['kv_bytes_per_token']} "
+                                  f"B/token "
+                                  f"({calibration['kv_mib']} MiB for "
+                                  f"{calibration['n_ctx']} tokens)")
 
             log.section("the extraction")
             engine = Engine(

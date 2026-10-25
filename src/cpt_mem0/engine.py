@@ -27,6 +27,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+#: How many memories a list call returns.
+#:
+#: mem0's own default is 20. That is a silent truncation: a store
+#: with more memories would return only the first 20, and the rest
+#: would be unfindable. There is no upper bound in mem0, only a
+#: lower one.
+LIST_LIMIT = 100_000
+
 
 class EngineError(RuntimeError):
     """The engine cannot do its job.
@@ -269,14 +277,75 @@ class Engine:
         return _as_list(result)
 
     def all(self, user_id: str | None = None) -> list[dict[str, Any]]:
-        """Everything in the store for this user."""
+        """Everything in the store for this user.
+
+        **The count is not capped.** mem0's ``get_all`` has a default
+        of ``top_k=20`` - a store with 25 memories would silently
+        return 20 of them, and the 21st would be unfindable. The
+        limit is passed explicitly and set high.
+
+        ``top_k`` has no upper bound in mem0, only a lower one.
+        """
         memory = self._require_open()
         try:
             result = memory.get_all(
-                filters={"user_id": user_id or self.user_id})
+                filters={"user_id": user_id or self.user_id},
+                top_k=LIST_LIMIT)
         except TypeError:
-            result = memory.get_all(user_id=user_id or self.user_id)
+            result = memory.get_all(user_id=user_id or self.user_id,
+                                    top_k=LIST_LIMIT)
         return _as_list(result)
+
+    def update(self, memory_id: str, text: str) -> dict[str, Any]:
+        """Change the content of one memory.
+
+        A memory that is wrong has to be fixable. Without this the
+        only way to correct one is to delete it and store it again,
+        and the new one gets a new id - every client that holds the
+        old id loses it.
+        """
+        if not memory_id:
+            raise EngineError("the memory id is empty")
+        if not text or not text.strip():
+            raise EngineError("the new text is empty")
+        memory = self._require_open()
+        try:
+            result = memory.update(memory_id=memory_id, text=text)
+        except TypeError:
+            result = memory.update(memory_id, text)
+        return _as_dict(result)
+
+    def delete_all(self, user_id: str | None = None) -> dict[str, Any]:
+        """Delete every memory of one user.
+
+        mem0's own implementation keeps listing after each batch,
+        because the vector store caps list() at 100 results by
+        default and a single call would silently leave the rest
+        behind.
+        """
+        memory = self._require_open()
+        try:
+            result = memory.delete_all(user_id=user_id or self.user_id)
+        except TypeError:
+            result = memory.delete_all(user_id=user_id or self.user_id)
+        return _as_dict(result)
+
+    def reset(self) -> dict[str, Any]:
+        """Delete absolutely everything.
+
+        This is the whole store, not one user. mem0 deletes the
+        collection and recreates it, and resets the history database
+        next to it.
+
+        The daemon only calls it when the caller says so explicitly.
+        """
+        memory = self._require_open()
+        try:
+            memory.reset()
+        except Exception as exc:
+            raise EngineError(
+                f"the store could not be reset: {exc}") from exc
+        return {"reset": True}
 
     def delete(self, memory_id: str,
                user_id: str | None = None) -> dict[str, Any]:

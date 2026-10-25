@@ -203,7 +203,7 @@
       "architecture": "gemma4",
       "license": "gemma",
       "rank_order": 5,
-      "notes": "Sliding-window and shared-KV architecture: the closed-form KV calculation does not apply. Requires calibration (SPEC section 4.3). Extraction measurement pending.",
+      "notes": "Sliding-window and shared-KV architecture: the closed-form KV calculation does not apply. Requires calibration (SPEC section 4.3). Extraction measurement pending. UD-Q4_K_XL measured on the disk: 3037 MiB, 35 layers, embedding 1536, max context 131072. The KV constant still has to be calibrated.",
       "quantisations": [
         {
           "name": "Q8_0",
@@ -244,6 +244,13 @@
           "name": "IQ3_XXS",
           "file": "gemma-4-E2B-it-UD-IQ3_XXS.gguf",
           "size_bytes": 2372993120,
+          "kv_bytes_per_token": null,
+          "kv_source": "calibrate"
+        },
+        {
+          "name": "UD-Q4_K_XL",
+          "file": "gemma-4-E2B-it-UD-Q4_K_XL.gguf",
+          "size_bytes": 3184496736,
           "kv_bytes_per_token": null,
           "kv_source": "calibrate"
         }
