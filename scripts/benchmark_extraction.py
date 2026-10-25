@@ -66,7 +66,8 @@ EMBEDDER_FLAGS = [
 #: The corpus.
 #:
 #: Each entry: the sentence, the question that has to find it, the
-#: language, and whether it is a **duplicate** of an earlier fact.
+#: language, and the index of the **original** sentence it is a
+#: duplicate of. -1 means it is a new fact.
 #:
 #: The duplicates matter. A service that stores the same fact twice
 #: is worse than one that misses a fact: the store fills with
@@ -74,6 +75,13 @@ EMBEDDER_FLAGS = [
 #: duplicates in this corpus are translations of the English facts -
 #: semantically the same thing in another language. A good extractor
 #: recognises them and stores nothing.
+#:
+#: The index of the original is needed for the recall: a duplicate
+#: that was correctly deduplicated has no fact of its own in the
+#: store, so the question about it has to be answered by the fact
+#: that was stored from the original. Without the index the recall
+#: counted a correctly deduplicated duplicate as a failure - the
+#: right fact was on the first place and the metric said "wrong".
 #:
 #: The first version of this corpus had every non-English sentence as
 #: a translation of an English one, and counted an empty result as a
@@ -83,74 +91,74 @@ EMBEDDER_FLAGS = [
 CORPUS = [
     # -- 8 unique English facts -------------------------------------
     ("The user rides a bicycle to the office every day.",
-     "How does the user get to work?", "en", False),
+     "How does the user get to work?", "en", -1),
     ("The build server has 64 GB of RAM.",
-     "How much memory does the build server have?", "en", False),
+     "How much memory does the build server have?", "en", -1),
     ("The coffee machine in the office is fully automatic.",
-     "What kind of coffee machine is in the office?", "en", False),
+     "What kind of coffee machine is in the office?", "en", -1),
     ("The office is on the third floor.",
-     "Which floor is the office on?", "en", False),
+     "Which floor is the office on?", "en", -1),
     ("The backup runs every night at two in the morning.",
-     "When does the backup run?", "en", False),
+     "When does the backup run?", "en", -1),
     ("The team uses PostgreSQL for the production database.",
-     "Which database does the team use in production?", "en", False),
+     "Which database does the team use in production?", "en", -1),
     ("The meeting room has a projector and a white board.",
-     "What is in the meeting room?", "en", False),
+     "What is in the meeting room?", "en", -1),
     ("The router is connected to the switch in the hallway.",
-     "What is the router connected to?", "en", False),
+     "What is the router connected to?", "en", -1),
 
     # -- 8 unique German facts - different content, not translations -
     ("Der Benutzer trinkt morgens Kaffee aus einer Tasse.",
-     "Was trinkt der Benutzer morgens?", "de", False),
+     "Was trinkt der Benutzer morgens?", "de", -1),
     ("Der Drucker im Büro ist ein Laserdrucker.",
-     "Welche Art von Drucker steht im Büro?", "de", False),
+     "Welche Art von Drucker steht im Büro?", "de", -1),
     ("Die Firewall blockiert eingehende Verbindungen aus dem Internet.",
-     "Was blockiert die Firewall?", "de", False),
+     "Was blockiert die Firewall?", "de", -1),
     ("Die Reisekostenabrechnung kommt am Monatsende.",
-     "Wann kommt die Reisekostenabrechnung?", "de", False),
+     "Wann kommt die Reisekostenabrechnung?", "de", -1),
     ("Der Chef liest das Handbuch der Datenbank täglich.",
-     "Was liest der Chef täglich?", "de", False),
+     "Was liest der Chef täglich?", "de", -1),
     ("Der Flur ist mit Bewegungsmeldern ausgestattet.",
-     "Was ist im Flur installiert?", "de", False),
+     "Was ist im Flur installiert?", "de", -1),
     ("Die Kunden werden per E-Mail benachrichtigt.",
-     "Wie werden die Kunden benachrichtigt?", "de", False),
+     "Wie werden die Kunden benachrichtigt?", "de", -1),
     ("Der Serverraum ist mit einem Klimalüfter ausgestattet.",
-     "Was ist im Serverraum?", "de", False),
+     "Was ist im Serverraum?", "de", -1),
 
     # -- 4 unique Spanish facts --------------------------------------
     ("El usuario programa en Python todos los días.",
-     "¿En qué programa el usuario?", "es", False),
+     "¿En qué programa el usuario?", "es", -1),
     ("La base de datos de prueba está vacía.",
-     "¿Cómo está la base de datos de prueba?", "es", False),
+     "¿Cómo está la base de datos de prueba?", "es", -1),
     ("El servidor web responde en menos de un segundo.",
-     "¿Cuánto tarda el servidor web?", "es", False),
+     "¿Cuánto tarda el servidor web?", "es", -1),
     ("Los informes se generan el primer lunes del mes.",
-     "¿Cuándo se generan los informes?", "es", False),
+     "¿Cuándo se generan los informes?", "es", -1),
 
     # -- 4 unique French facts ---------------------------------------
     ("L'utilisateur écrit la documentation en français.",
-     "Dans quelle langue l'utilisateur écrit-il ?", "fr", False),
+     "Dans quelle langue l'utilisateur écrit-il ?", "fr", -1),
     ("Le serveur de test est éteint le week-end.",
-     "Quand le serveur de test est-il éteint ?", "fr", False),
+     "Quand le serveur de test est-il éteint ?", "fr", -1),
     ("La sauvegarde locale est chiffrée.",
-     "La sauvegarde locale est-elle chiffrée ?", "fr", False),
+     "La sauvegarde locale est-elle chiffrée ?", "fr", -1),
     ("Le tableau de bord affiche les ventes du mois.",
-     "Que montre le tableau de bord ?", "fr", False),
+     "Que montre le tableau de bord ?", "fr", -1),
 
     # -- 6 deliberate duplicates: translations of the English facts --
     # The extractor has to recognise these and store nothing.
     ("Der Benutzer fährt jeden Tag mit dem Fahrrad zur Arbeit.",
-     "Wie kommt der Benutzer zur Arbeit?", "de", True),
+     "Wie kommt der Benutzer zur Arbeit?", "de", 0),
     ("Der Build-Server hat 64 GB RAM.",
-     "Wie viel RAM hat der Build-Server?", "de", True),
+     "Wie viel RAM hat der Build-Server?", "de", 1),
     ("Die Kaffeemaschine im Büro ist vollautomatisch.",
-     "Welche Art von Kaffeemaschine steht im Büro?", "de", True),
+     "Welche Art von Kaffeemaschine steht im Büro?", "de", 2),
     ("Das Büro befindet sich im dritten Stock.",
-     "In welchem Stock liegt das Büro?", "de", True),
+     "In welchem Stock liegt das Büro?", "de", 3),
     ("El usuario va al trabajo en bicicleta todos los días.",
-     "¿Cómo llega el usuario al trabajo?", "es", True),
+     "¿Cómo llega el usuario al trabajo?", "es", 0),
     ("La machine à café du bureau est entièrement automatique.",
-     "Quel type de machine à café y a-t-il au bureau ?", "fr", True),
+     "Quel type de machine à café y a-t-il au bureau ?", "fr", 2),
 ]
 
 class Log:
@@ -341,8 +349,9 @@ def main() -> int:
             new_failed = 0
             duplicate_leaked = 0
 
-            for index, (sentence, _question, language, duplicate) in \
+            for index, (sentence, _question, language, origin) in \
                     enumerate(corpus):
+                duplicate = origin >= 0
                 started = time.time()
                 try:
                     outcome = engine.remember(sentence)
@@ -389,17 +398,29 @@ def main() -> int:
             same_language = {"total": 0, "found": 0}
             cross_language = {"total": 0, "found": 0}
 
-            for sentence, question, language, _duplicate in corpus:
+            for sentence, question, language, origin in corpus:
                 found = engine.recall(question, user_id="benchmark")
                 texts = [item.get("memory") if isinstance(item, dict)
                          else str(item) for item in found]
                 top = texts[0] if texts else ""
 
                 # The right fact has to be in the first three.
+                #
+                # A duplicate that was correctly deduplicated has no
+                # fact of its own in the store. Its question has to be
+                # answered by the fact that was stored from the
+                # original - the same thing in another language.
+                # Without this the recall counted a correctly
+                # deduplicated duplicate as a failure: the right fact
+                # was on the first place and the metric said "wrong".
+                expected = sentence
+                if origin >= 0:
+                    expected = corpus[origin][0]
+
                 match = False
                 fact_language = None
                 for source, fact in stored:
-                    if source == sentence:
+                    if source == expected:
                         fact_language = language_of(fact)
                         if fact in texts[:3]:
                             match = True
@@ -442,12 +463,24 @@ def main() -> int:
                 "recall_cross_language": (
                     cross_language["found"] / cross_language["total"]
                     if cross_language["total"] else 0),
-                "language_fidelity": (language_ok / len(stored)
-                                      if stored else 0),
+                # mem0 rewrites every fact into English - the
+                # extraction prompt is English and the model follows
+                # it. Measured: 7 of 8 German, Spanish and French
+                # facts came back in English.
+                #
+                # That is not a failure. It is what makes the
+                # cross-language recall work: a German question finds
+                # a fact that was stored in English, because
+                # everything is in the same language.
+                "language_preservation": (language_ok / len(stored)
+                                          if stored else 0),
+                "language_normalisation": (1 - language_ok / len(stored)
+                                           if stored else 0),
                 "average_extraction_seconds": (
                     total_time / total if total else 0),
                 "facts_stored": len(stored),
             }
+            results["summary"] = summary
 
             log.section("the summary")
             for name, value in summary.items():

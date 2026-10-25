@@ -69,7 +69,17 @@
       },
       "kv_bytes_per_token_f16": 32768,
       "recurrent_state_mib": 100.5,
-      "recurrent_state_source": "measured"
+      "recurrent_state_source": "measured",
+      "extraction": {
+        "recall": 0.567,
+        "json_validity": 1.0,
+        "atomicity": 1.0,
+        "language_fidelity": 0.292,
+        "empty_rate": 0.042,
+        "corpus": "30 sentences, 4 languages, 24 unique + 6 cross-language duplicates",
+        "date": "2026-10-25",
+        "language_normalisation": 0.708
+      }
     },
     {
       "id": "Qwen3-8B",

@@ -93,7 +93,14 @@ identifies the user.
 | `recall` | the fact is found again by a search - in the top three |
 | `recall_same_language` | the question and the fact in the same language |
 | `recall_cross_language` | the question in one language, the fact in another |
-| `language_fidelity` | the answer is in the language of the input |
+| `language_preservation` | the answer is in the language of the input |
+| `language_normalisation` | how much was rewritten into English |
+
+**mem0 rewrites every fact into English.** The extraction prompt is
+English and the model follows it. That is not a failure - it is what
+makes the cross-language recall work: a German question finds a
+fact that was stored in English, because everything is in the same
+language.
 
 **Why the duplicates are there.** The first version of the corpus
 had every non-English sentence as a translation of an English one

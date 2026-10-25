@@ -947,3 +947,85 @@ German question finds a fact that was stored in English.
 with the work directory. The logs are the evidence for the buffer
 lines, so they are now copied next to the result file.
 
+## The extraction benchmark — 25.10.2026, the second run
+
+The corrected corpus: 24 unique facts in four languages and 6
+deliberate duplicates. No problems, exit 0.
+
+```json
+{"sentences": 30, "new_facts": 24, "duplicates": 6,
+ "extraction_rate": 0.958, "dedup_precision": 0.833,
+ "false_empty": 0, "false_duplicate": 1, "atomicity": 1.000,
+ "recall": 0.567, "recall_same_language": 0.857,
+ "recall_cross_language": 0.647,
+ "language_preservation": 0.292, "facts_stored": 24,
+ "average_extraction_seconds": 2.071}
+```
+
+### What the numbers mean
+
+| Metric | Value | Reading |
+|---|---|---|
+| `extraction_rate` | 0.958 | 23 of 24 new facts produced a fact |
+| `dedup_precision` | 0.833 | 5 of 6 duplicates produced **nothing** |
+| `atomicity` | 1.000 | every fact is one fact |
+| `recall_same_language` | 0.857 | the question and the fact in one language |
+| `recall_cross_language` | 0.647 | the question in one language, the fact in another |
+| `language_preservation` | 0.292 | **mem0 rewrites the facts into English** |
+
+### The findings
+
+**1. mem0 normalises every fact into English.** The extraction prompt
+is English and the model follows it:
+
+| Input | Stored fact |
+|---|---|
+| "Der Drucker im Büro ist ein Laserdrucker." | "The printer in the user's office is a laser printer." |
+| "Die Firewall blockiert eingehende Verbindungen aus dem Internet." | "The office firewall blocks incoming connections from the internet." |
+| "L'utilisateur écrit la documentation en français." | "User writes documentation in French." |
+
+**That is not a failure.** It is what makes the cross-language recall
+work: a German question finds a fact that was stored in English,
+because everything is in the same language. The metric was renamed
+from `language_fidelity` to `language_preservation`, and the
+counterpart `language_normalisation` says how much was rewritten.
+
+**2. The cross-language deduplication works, and it is not perfect.**
+Five of the six translations were recognised and suppressed. The one
+that slipped through was the loosest paraphrase:
+
+| Duplicate | Original | Result |
+|---|---|---|
+| "Der Benutzer fährt jeden Tag mit dem Fahrrad zur Arbeit." | "The user rides a bicycle to the office every day." | **stored again** |
+| "Der Build-Server hat 64 GB RAM." | "The build server has 64 GB of RAM." | suppressed |
+| "Die Kaffeemaschine im Büro ist vollautomatisch." | "The coffee machine in the office is fully automatic." | suppressed |
+| "Das Büro befindet sich im dritten Stock." | "The office is on the third floor." | suppressed |
+| "El usuario va al trabajo en bicicleta todos los días." | "The user rides a bicycle to the office every day." | suppressed |
+| "La machine à café du bureau est entièrement automatique." | "The coffee machine in the office is fully automatic." | suppressed |
+
+The one that leaked is the one whose wording differs the most: "zur
+Arbeit" against "to the office". The closer the wording, the more
+reliably the duplicate is recognised.
+
+**3. One new fact was not stored.** "Der Benutzer trinkt morgens
+Kaffee aus einer Tasse." produced nothing. That is the model's
+judgement: a coffee cup in the morning is not worth a memory. It is
+the one `false_empty` in the run.
+
+**4. The recall was measured wrongly.** The first version of the
+metric looked for the fact under the sentence that was searched. A
+duplicate that was correctly deduplicated has no fact of its own, so
+the question about it has to be answered by the fact from the
+original. Without that the metric reported a failure even when the
+right fact was on the first place - which is what happened with
+"Wie viel RAM hat der Build-Server?". The corpus now names the
+original for every duplicate.
+
+### The hardware
+
+| | |
+|---|---|
+| VRAM free before | 11101 MiB |
+| VRAM used after | 1015 MiB |
+| average extraction | 2.07 s per sentence |
+

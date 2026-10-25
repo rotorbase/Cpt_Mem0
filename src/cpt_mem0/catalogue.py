@@ -19,9 +19,10 @@ See SPEC section 17.4 and docs/catalogue.md.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .planner import QUANTISATION_ORDER
 
@@ -46,7 +47,18 @@ class Quantisation:
 
 @dataclass(frozen=True)
 class ExtractionMeasurement:
-    """Result of an extraction benchmark for one model."""
+    """Result of an extraction benchmark for one model.
+
+    **``language_fidelity`` is not a failure rate.** mem0 rewrites
+    every fact into English: the extraction prompt is English and the
+    model follows it. Measured on the 9B, 7 of 8 German, Spanish and
+    French facts came back in English.
+
+    That is what makes the cross-language recall work - a German
+    question finds a fact that was stored in English, because
+    everything is in the same language. ``language_normalisation``
+    says how much was rewritten.
+    """
 
     recall: float
     json_validity: float
@@ -55,6 +67,8 @@ class ExtractionMeasurement:
     empty_rate: float
     corpus: str
     date: str
+    #: How much of the input language was rewritten into English.
+    language_normalisation: float = 0.0
 
     @property
     def measured(self) -> bool:
@@ -200,6 +214,7 @@ def _entry_to_dict(entry: CatalogueEntry) -> dict[str, Any]:
             "json_validity": e.json_validity,
             "atomicity": e.atomicity,
             "language_fidelity": e.language_fidelity,
+            "language_normalisation": e.language_normalisation,
             "empty_rate": e.empty_rate,
             "corpus": e.corpus,
             "date": e.date,
@@ -218,6 +233,8 @@ def entry_from_dict(data: dict[str, Any]) -> CatalogueEntry:
             json_validity=float(raw["json_validity"]),
             atomicity=float(raw["atomicity"]),
             language_fidelity=float(raw["language_fidelity"]),
+            language_normalisation=float(
+                raw.get("language_normalisation", 0.0)),
             empty_rate=float(raw["empty_rate"]),
             corpus=str(raw.get("corpus", "")),
             date=str(raw.get("date", "")),

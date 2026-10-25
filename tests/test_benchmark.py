@@ -40,26 +40,51 @@ class TestCorpus:
         assert languages == {"en", "de", "es", "fr"}
 
     def test_every_language_has_new_facts(self):
-        """The language fidelity has to be measured on facts that were
-        actually extracted. A corpus with only English facts measures
+        """The language has to be measured on facts that were actually
+        extracted. A corpus with only English facts measures
         nothing."""
         for language in ("en", "de", "es", "fr"):
             new = [entry for entry in CORPUS
-                   if entry[2] == language and not entry[3]]
+                   if entry[2] == language and entry[3] == -1]
             assert new, f"no new facts in {language}"
 
     def test_it_has_duplicates(self):
         """Without duplicates the deduplication is not measured at
         all."""
-        duplicates = [entry for entry in CORPUS if entry[3]]
+        duplicates = [entry for entry in CORPUS if entry[3] != -1]
         assert len(duplicates) >= 4
+
+    def test_every_duplicate_names_an_existing_original(self):
+        """The index has to point at a sentence that comes before.
+
+        Without the index the recall looked for the fact under the
+        duplicate itself. A correctly deduplicated duplicate has no
+        fact of its own, so the recall counted it as a failure - the
+        right fact was on the first place.
+        """
+        for index, entry in enumerate(CORPUS):
+            origin = entry[3]
+            if origin == -1:
+                continue
+            assert 0 <= origin < index, (
+                f"the duplicate at {index} points at {origin}")
 
     def test_the_new_facts_are_distinct(self):
         """Two sentences with the same content would be a duplicate
         that is not marked as one, and the metric would call the
         empty result a failure."""
-        contents = [entry[0].lower() for entry in CORPUS if not entry[3]]
+        contents = [entry[0].lower() for entry in CORPUS if entry[3] == -1]
         assert len(contents) == len(set(contents))
+
+    def test_the_duplicates_are_translations(self):
+        """A duplicate has to be in another language than its
+        original - that is what makes it a cross-language test."""
+        for entry in CORPUS:
+            origin = entry[3]
+            if origin == -1:
+                continue
+            assert entry[2] != CORPUS[origin][2], (
+                f"{entry[0]!r} is in the same language as its original")
 
     def test_the_duplicates_have_a_question(self):
         """A duplicate still needs a question: the recall has to find
@@ -125,3 +150,47 @@ class TestTheMetrics:
         text = script.read_text(encoding="utf-8")
         assert "shutil.copyfile" in text
         assert "benchmark.log" in text
+
+
+class TestTheCatalogueMeasurement:
+    """The measured extraction goes into the catalogue.
+
+    That is what makes the ranking measured instead of assumed. The
+    9B has a measurement from the benchmark of 25.10.2026.
+    """
+
+    def test_the_measurement_is_in_the_catalogue(self):
+        import json
+
+        catalogue = json.loads(
+            (ROOT / "catalogue.json").read_text(encoding="utf-8"))
+        entry = next(m for m in catalogue["models"]
+                     if m["id"] == "Qwen3.5-9B")
+        assert "extraction" in entry
+        # The "measured" flag is added when the catalogue is written,
+        # not in the file itself.
+        assert entry["extraction"]["recall"] > 0
+        assert entry["extraction"]["date"]
+
+    def test_the_measurement_survives_the_roundtrip(self):
+        """The catalogue is written and read by the app. A field that
+        is dropped on the way loses the measurement."""
+        from cpt_mem0.catalogue import load_catalogue
+
+        catalogue = load_catalogue(ROOT / "catalogue.json")
+        entry = next(e for e in catalogue.entries
+                     if e.model_id == "Qwen3.5-9B")
+        assert entry.extraction is not None
+        assert entry.extraction.measured is True
+        assert entry.extraction.recall > 0
+        assert entry.extraction.language_normalisation > 0
+
+    def test_the_language_fidelity_is_documented(self):
+        """The number is low by design - mem0 rewrites the facts into
+        English. The dataclass has to say so, otherwise the next
+        reader takes it for a failure rate."""
+        from cpt_mem0.catalogue import ExtractionMeasurement
+
+        doc = ExtractionMeasurement.__doc__ or ""
+        assert "English" in doc
+        assert "not a failure rate" in doc
