@@ -90,7 +90,8 @@ class TestKvCacheScaling:
     def test_the_documented_sizes_hold(self):
         """SPEC section 4.5: 16384 tokens of the 9B."""
         per_token_f16 = QWEN35_9B_KV_BYTES_F16
-        mib = lambda b: b * 16384 / (1024 * 1024)
+        def mib(b):
+            return b * 16384 / (1024 * 1024)
         assert round(mib(per_token_f16)) == 512
         assert round(mib(kv_bytes_for_cache(per_token_f16, "q8_0"))) == 272
         assert round(mib(kv_bytes_for_cache(per_token_f16, "q4_0"))) == 144
@@ -559,7 +560,6 @@ class TestKvUnifiedSemantics:
         The measured total was within 4 MiB of the prediction, so the
         budget model is sound. Only the meaning of ``-c`` was wrong.
         """
-        mib_per_token = candidate.kv_bytes_per_token / (1024 * 1024)
         predicted_total = (candidate.weights_vram_mib
                            + candidate.compute_mib
                            + candidate.cuda_context_mib
@@ -836,7 +836,6 @@ class TestCacheTypeIsDegradedLast:
         model never gets smaller as the card grows.
         """
         previous_params = None
-        previous_model = None
         for total in (4096, 5120, 6144, 8192, 12288):
             hardware = Hardware(total_vram_mib=total)
             result = plan_for_hardware(hardware, catalogue.sorted_entries(),
@@ -849,7 +848,6 @@ class TestCacheTypeIsDegradedLast:
                 assert params >= previous_params, (
                     f"{total} MiB picked a smaller model than a smaller card")
             previous_params = params
-            previous_model = result.candidate.model_id
 
     def test_the_same_model_grows_with_more_vram(self, catalogue):
         """For a model that fits on both cards, the bigger card gets

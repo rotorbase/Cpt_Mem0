@@ -480,6 +480,24 @@ class Daemon:
         except OSError:
             pass
 
+    @staticmethod
+    def _autostart_command() -> str:
+        """The command line the autostart task runs.
+
+        **The models stay off.** The task starts the daemon with the
+        models suspended: the window and the API are there, the VRAM
+        stays free, and the user presses the switch when the card
+        should be used.
+
+        From the packaged app it is the .exe itself. From the source
+        tree it is the module.
+        """
+        import sys
+
+        if getattr(sys, "frozen", False):
+            return '"' + sys.executable + '" --suspend'
+        return '"' + sys.executable + '" -m cpt_mem0.cli ui --suspend'
+
     def _apply_autostart(self, enabled: bool) -> None:
         """Write the autostart task on Windows.
 
@@ -491,7 +509,6 @@ class Daemon:
         """
         import os
         import subprocess
-        import sys
 
         if os.name != "nt":
             # On Linux and macOS the autostart is a systemd unit or a
@@ -499,10 +516,7 @@ class Daemon:
             return
 
         task_name = "Cpt_Mem0"
-        # The command line for the task. The path to the executable can
-        # have spaces, so it is quoted - twice, because schtasks takes
-        # the whole /TR argument as one string.
-        action = '"' + sys.executable + '" -m cpt_mem0.cli start'
+        action = self._autostart_command()
         command = (
             'schtasks /Create /TN "' + task_name + '" /TR \'"' + action
             + '"\' /SC ONLOGON /RL LIMITED /F'
@@ -581,13 +595,12 @@ class Daemon:
         A model without a measured KV constant cannot be planned and
         is listed as such - it needs a calibration run first.
         """
-        from .catalogue import load_catalogue
+        from .catalogue import load_default_catalogue
         from .hardware import detect_hardware
         from .planner import Hardware, PlannerConfig, plan_for_hardware
 
         hardware = detect_hardware() or Hardware(total_vram_mib=0)
-        catalogue = load_catalogue(
-            Path(__file__).resolve().parent.parent.parent / "catalogue.json")
+        catalogue = load_default_catalogue()
 
         models: list[dict[str, Any]] = []
         for entry in catalogue.sorted_entries():

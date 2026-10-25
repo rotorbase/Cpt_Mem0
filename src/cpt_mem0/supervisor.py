@@ -19,6 +19,7 @@ says which one failed.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import re
 import subprocess
@@ -30,6 +31,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+#: Whether this runs on Windows.
+#:
+#: It is a constant of its own and not ``os.name`` at the place of
+#: use: a test that patches ``os.name`` breaks pathlib, because
+#: pathlib asks the same question to pick its path class.
+IS_WINDOWS = os.name == "nt"
 
 
 class ServerError(RuntimeError):
@@ -164,6 +172,14 @@ class Supervisor:
             log_handle = spec.log_path.open("w", encoding="utf-8",
                                             errors="replace")
 
+        # llama-server.exe is a console program. Without this flag
+        # Windows opens a console window for it every time a model
+        # starts - and the app is a window, not a terminal. The flag
+        # tells Windows to run it without a console.
+        no_window: dict[str, int] = {}
+        if IS_WINDOWS:
+            no_window["creationflags"] = subprocess.CREATE_NO_WINDOW
+
         try:
             process = subprocess.Popen(
                 command,
@@ -172,6 +188,7 @@ class Supervisor:
                 text=True,
                 errors="replace",
                 cwd=str(spec.binary.parent),
+                **no_window,
             )
         except OSError as exc:
             if log_handle is not None:

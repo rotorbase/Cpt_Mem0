@@ -158,14 +158,14 @@ def planned_flags() -> list[str]:
     wrong context, and the context is what decides whether the
     extraction can work at all.
     """
-    from cpt_mem0.catalogue import load_catalogue
+    from cpt_mem0.catalogue import default_catalogue_path, load_catalogue
     from cpt_mem0.planner import (
         Hardware,
         PlannerConfig,
         plan_for_hardware,
     )
 
-    catalogue = load_catalogue(ROOT / "catalogue.json")
+    catalogue = load_catalogue(default_catalogue_path())
     hardware = Hardware(total_vram_mib=12288,
                         name="NVIDIA GeForce RTX 3060", vendor="nvidia")
     for entry in catalogue.sorted_entries():

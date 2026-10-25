@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import subprocess
 import sys
@@ -39,7 +38,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from cpt_mem0.catalogue import load_catalogue  # noqa: E402
+from cpt_mem0.catalogue import default_catalogue_path, load_catalogue  # noqa: E402
 from cpt_mem0.planner import (  # noqa: E402
     Hardware,
     PlannerConfig,
@@ -313,7 +312,7 @@ def main() -> int:
     parser.add_argument("--embedder-port", type=int, default=8800)
     parser.add_argument("--tolerance-mib", type=int, default=300)
     parser.add_argument("--timeout", type=int, default=180)
-    parser.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
+    parser.add_argument("--catalogue", default=str(default_catalogue_path()))
     parser.add_argument("--results-dir", default=str(ROOT / "results"))
     args = parser.parse_args()
 

@@ -284,8 +284,24 @@ def load_catalogue(path: str | Path) -> Catalogue:
 
 
 def default_catalogue_path() -> Path:
-    """The shipped catalogue, next to the package data."""
-    return Path(__file__).resolve().parent.parent.parent / CATALOGUE_FILENAME
+    """The shipped catalogue.
+
+    **It lives inside the package.** In the source tree that is
+    ``src/cpt_mem0/catalogue.json``, in the packaged app it is
+    ``_internal/cpt_mem0/catalogue.json`` - the same place in both
+    cases. It used to be in the repository root, which does not exist
+    in the package: the app started and then said "catalogue not
+    found" in the status line.
+
+    The root is still searched as a fallback, so a checkout that has
+    an old layout keeps working.
+    """
+    package = Path(__file__).resolve().parent / CATALOGUE_FILENAME
+    if package.is_file():
+        return package
+
+    root = Path(__file__).resolve().parent.parent.parent / CATALOGUE_FILENAME
+    return root
 
 
 def load_default_catalogue() -> Catalogue:

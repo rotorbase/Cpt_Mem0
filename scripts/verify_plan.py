@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import queue as queue_mod
 import re
 import shutil
@@ -47,11 +46,10 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 from run_tests import _assign_job  # noqa: E402
 
-from cpt_mem0.catalogue import load_catalogue  # noqa: E402
+from cpt_mem0.catalogue import default_catalogue_path, load_catalogue  # noqa: E402
 from cpt_mem0.planner import (  # noqa: E402
     Hardware,
     PlannerConfig,
-    evaluate_candidate,
     plan_for_hardware,
 )
 
@@ -266,7 +264,6 @@ def run_inference(port: int, timeout: float = 60.0) -> tuple[bool, str]:
     result is reported as ``(True, "not applicable: ...")`` so the
     caller can tell it apart from a real failure.
     """
-    import json
     import urllib.error
     import urllib.request
 
@@ -460,7 +457,7 @@ def main() -> int:
                         help="allowed difference between prediction and measurement")
     parser.add_argument("--timeout", type=int, default=90,
                         help="seconds to wait for the server (0 = no limit)")
-    parser.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
+    parser.add_argument("--catalogue", default=str(default_catalogue_path()))
     parser.add_argument("--results-dir",
                         help="where to write the server log "
                              "(default: <repo>/results)")
@@ -555,7 +552,6 @@ def main() -> int:
     log, _ = run_server(exe, model_path, server_flags, args.port,
                         timeout=args.timeout or 10**9,
                         on_ready=_measure_while_running)
-    after = gpu_used_mib()
 
     # Write the server log next to the other results. Without it the
     # numbers below cannot be checked afterwards - and the first run
@@ -665,7 +661,7 @@ def main() -> int:
 
     if "inference_ok" in measured:
         if measured["inference_ok"]:
-            print(f"inference: the server generated a response",
+            print("inference: the server generated a response",
                   flush=True)
         else:
             problems.append(

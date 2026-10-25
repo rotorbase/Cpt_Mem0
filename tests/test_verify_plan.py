@@ -9,7 +9,6 @@ a real server; see ``docs/verification.md`` section 8a.
 """
 
 import importlib.util
-import re
 import sys
 from pathlib import Path
 

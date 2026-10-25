@@ -162,8 +162,10 @@ class TestTheCatalogueMeasurement:
     def test_the_measurement_is_in_the_catalogue(self):
         import json
 
+        from cpt_mem0.catalogue import default_catalogue_path
+
         catalogue = json.loads(
-            (ROOT / "catalogue.json").read_text(encoding="utf-8"))
+            default_catalogue_path().read_text(encoding="utf-8"))
         entry = next(m for m in catalogue["models"]
                      if m["id"] == "Qwen3.5-9B")
         assert "extraction" in entry
@@ -175,9 +177,9 @@ class TestTheCatalogueMeasurement:
     def test_the_measurement_survives_the_roundtrip(self):
         """The catalogue is written and read by the app. A field that
         is dropped on the way loses the measurement."""
-        from cpt_mem0.catalogue import load_catalogue
+        from cpt_mem0.catalogue import default_catalogue_path, load_catalogue
 
-        catalogue = load_catalogue(ROOT / "catalogue.json")
+        catalogue = load_catalogue(default_catalogue_path())
         entry = next(e for e in catalogue.entries
                      if e.model_id == "Qwen3.5-9B")
         assert entry.extraction is not None

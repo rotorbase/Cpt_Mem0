@@ -1,0 +1,10 @@
+# The runtime dependencies of the app.
+#
+# The versions are pinned, so a build from today and a build from next
+# month are the same. The build tool (PyInstaller) is not here - it is
+# only needed to build the package, not to run it.
+
+mem0ai==2.2.1
+qdrant-client==1.20.0
+pyyaml==6.0.3
+pywebview>=5.0

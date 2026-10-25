@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from cpt_mem0.catalogue import load_catalogue  # noqa: E402
+from cpt_mem0.catalogue import default_catalogue_path, load_catalogue  # noqa: E402
 from cpt_mem0.planner import (  # noqa: E402
     Hardware,
     PlannerConfig,
@@ -75,7 +75,7 @@ def _max_context(catalogue, hardware, config):
 
 
 def main() -> int:
-    catalogue = load_catalogue(ROOT / "catalogue.json")
+    catalogue = load_catalogue(default_catalogue_path())
 
     print("### Cascade result (SPEC section 4.4 order)")
     print()

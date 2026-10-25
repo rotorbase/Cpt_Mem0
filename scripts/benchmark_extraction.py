@@ -209,14 +209,14 @@ def planned_flags(model_id: str = "Qwen3.5-9B",
     cannot be planned, and the benchmark uses a fixed context instead.
     The reason is returned so the log says which path was taken.
     """
-    from cpt_mem0.catalogue import load_catalogue
+    from cpt_mem0.catalogue import default_catalogue_path, load_catalogue
     from cpt_mem0.planner import (
         Hardware,
         PlannerConfig,
         plan_for_hardware,
     )
 
-    catalogue = load_catalogue(ROOT / "catalogue.json")
+    catalogue = load_catalogue(default_catalogue_path())
     hardware = Hardware(total_vram_mib=12288,
                         name="NVIDIA GeForce RTX 3060", vendor="nvidia")
     for entry in catalogue.sorted_entries():

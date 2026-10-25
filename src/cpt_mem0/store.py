@@ -22,8 +22,8 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 
 class VectorStore:
@@ -36,7 +36,7 @@ class VectorStore:
 
     # ---- loading and saving -------------------------------------------
 
-    def load(self) -> "VectorStore":
+    def load(self) -> VectorStore:
         """Read the collection from disk. A missing file is an empty
         collection, not an error."""
         if not self.path.is_file():
@@ -141,7 +141,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     dot = 0.0
     norm_a = 0.0
     norm_b = 0.0
-    for x, y in zip(a, b):
+    for x, y in zip(a, b, strict=True):
         dot += x * y
         norm_a += x * x
         norm_b += y * y

@@ -265,6 +265,36 @@ class TestSettings:
         assert "ONLOGON" in command
         assert "cpt_mem0" in command
 
+    def test_the_autostart_leaves_the_models_off(self, daemon, monkeypatch):
+        """The autostart starts the daemon with the models suspended:
+        the window and the API are there, the VRAM stays free."""
+        calls = []
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        import subprocess
+
+        monkeypatch.setattr(subprocess, "run",
+                            lambda command, **kwargs: calls.append(command))
+        monkeypatch.setattr(os, "name", "nt")
+
+        daemon.set_setting("autostart", True)
+        assert "--suspend" in calls[0]
+
+    def test_the_packaged_app_starts_itself(self, daemon, monkeypatch):
+        """From the packaged app the task runs the .exe itself."""
+        import sys
+
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", "C:/app/Cpt_Mem0.exe")
+
+        command = Daemon._autostart_command()
+        assert "Cpt_Mem0.exe" in command
+        assert "--suspend" in command
+
     def test_the_autostart_off_deletes_the_task(self, daemon, monkeypatch):
         calls = []
 
@@ -316,3 +346,55 @@ class TestSettings:
         reloaded = Daemon(daemon.config, DaemonPaths(
             logs=tmp_path / "logs", state=tmp_path / "state"))
         assert reloaded.settings()["winamp"] is False
+
+
+class TestThePackagedApp:
+    """The .exe is what the user downloads.
+
+    It starts the window. A bare flag belongs to the window, because
+    the window is what the app does.
+    """
+
+    def test_a_bare_flag_belongs_to_the_window(self):
+        """``Cpt_Mem0.exe --suspend`` means ``ui --suspend``."""
+        from cpt_mem0.cli import build_parser
+
+        parser = build_parser()
+        args = parser.parse_args(["ui", "--suspend"])
+        assert args.suspend is True
+        assert args.func.__name__ == "cmd_ui"
+
+    def test_the_main_maps_a_bare_flag(self):
+        """The mapping happens before argparse sees it."""
+        from cpt_mem0 import cli
+
+        calls = []
+
+        original = cli.build_parser
+
+        def fake_parser():
+            class Wrapper:
+                def parse_args(self, argv):
+                    calls.append(argv)
+                    raise SystemExit(0)
+
+            return Wrapper()
+
+        cli.build_parser = fake_parser
+        try:
+            try:
+                cli.main(["--suspend"])
+            except SystemExit:
+                pass
+        finally:
+            cli.build_parser = original
+
+        assert calls == [["ui", "--suspend"]]
+
+    def test_a_command_stays_a_command(self):
+        """``Cpt_Mem0.exe status`` is still the status."""
+        from cpt_mem0.cli import build_parser
+
+        parser = build_parser()
+        args = parser.parse_args(["status"])
+        assert args.func.__name__ == "cmd_status"

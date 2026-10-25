@@ -534,46 +534,45 @@ def cmd_ui(args) -> int:
     opens the store itself, the store has an exclusive lock and the
     daemon is the only one that may hold it.
 
+    The native window is a WebView2 - the engine Edge already ships.
+    Without pywebview the same three files open in the system
+    browser; the interface is the same either way.
+
     With ``--suspend`` the daemon comes up with the models off. The
     API is reachable, the memory is there, and the VRAM stays free
     until the big switch is pressed.
     """
-    import threading
-    import webbrowser
-
     from .config import Config
     from .daemon import Daemon, DaemonPaths
+    from .window import (
+        run_window,
+        setup_logging,
+        start_daemon_in_thread,
+        wait_for_address,
+    )
+
+    # The packaged app has no console. Everything that goes wrong
+    # around the window goes into the log file.
+    setup_logging()
 
     config = Config()
     daemon = Daemon(config, DaemonPaths.default())
 
-    thread = threading.Thread(
-        target=daemon.start, kwargs={"suspend": args.suspend},
-        daemon=True)
-    thread.start()
+    start_daemon_in_thread(daemon, suspend=args.suspend)
 
-    # The daemon has to be up before the browser asks for the page.
-    for _ in range(120):
-        if daemon.address:
-            break
-        time.sleep(0.25)
+    address = wait_for_address(daemon)
+    if not address:
+        print("the daemon did not come up", file=sys.stderr)
+        return 1
 
-    address = daemon.address or f"http://{config.server.host}"
     print(f"the window is at {address}")
 
-    if not args.no_browser:
-        try:
-            webbrowser.open(address)
-        except Exception:
-            pass
-
     try:
-        while thread.is_alive():
-            thread.join(0.5)
+        return run_window(daemon, address, open_browser=args.no_browser)
     except KeyboardInterrupt:
         print("stopping")
         daemon.stop()
-    return 0
+        return 0
 
 
 def cmd_status(args) -> int:
@@ -682,9 +681,10 @@ def build_parser() -> argparse.ArgumentParser:
     stop.set_defaults(func=cmd_stop)
 
     ui = sub.add_parser(
-        "ui", help="open the window in the browser")
+        "ui", help="open the window")
     ui.add_argument("--no-browser", action="store_true",
-                    help="only print the address, do not open a browser")
+                    help="open the system browser instead of the native "
+                         "window")
     ui.add_argument("--suspend", action="store_true",
                     help="start the daemon with the models off")
     ui.set_defaults(func=cmd_ui)
@@ -697,16 +697,40 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _log_problem(message: str) -> None:
+    """Write a problem into the log file, if there is one.
+
+    The packaged app has no console, so a message that goes to stderr
+    is lost.
+    """
+    try:
+        from .window import log_problem
+
+        log_problem(message)
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
+
+    # A bare flag belongs to the window: the app is a window, and
+    # ``Cpt_Mem0.exe --suspend`` means ``ui --suspend``.
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0].startswith("-"):
+        argv = ["ui"] + list(argv)
+
     args = parser.parse_args(argv)
     try:
         return args.func(args)
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        _log_problem(f"error: {exc}")
         return EXIT_ERROR
     except Exception as exc:  # pragma: no cover - top-level guard
         print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        _log_problem(f"error: {type(exc).__name__}: {exc}")
         return EXIT_ERROR
 
 

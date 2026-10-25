@@ -22,13 +22,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from cpt_mem0.catalogue import load_catalogue  # noqa: E402
+from cpt_mem0.catalogue import default_catalogue_path, load_catalogue  # noqa: E402
 from cpt_mem0.planner import (  # noqa: E402
-    CONTEXT_FLOOR_SLOT,
-    HOST_FRACTION,
-    CUDA_CTX_MIB,
     COMPUTE_MIB,
     COMPUTE_MIB_SMALL,
+    CONTEXT_FLOOR_SLOT,
+    CUDA_CTX_MIB,
+    HOST_FRACTION,
     KV_BLOCK_TOKENS,
     Hardware,
     PlannerConfig,
@@ -71,7 +71,7 @@ def _fixed_cost(entry, quant, cache_type: str) -> tuple[float, float]:
 
 
 def main() -> int:
-    catalogue = load_catalogue(str(ROOT / "catalogue.json"))
+    catalogue = load_catalogue(str(default_catalogue_path()))
     config = PlannerConfig(embedder_backends=("llamacpp",))
 
     chat_entry = _entry(catalogue, CHAT_MODEL[0])

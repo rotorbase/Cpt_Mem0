@@ -15,6 +15,12 @@ keys/
 store/
 *.log
 
+# The build of the Windows package. It is 89 MB and it is built on
+# GitHub Actions - the repository keeps the sources, not the output.
+build/
+dist/
+*.spec.bak
+
 # Models (large binaries — fetched, never committed)
 models/
 *.gguf

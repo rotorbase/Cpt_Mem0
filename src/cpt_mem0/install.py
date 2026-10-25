@@ -23,7 +23,6 @@ warns.
 from __future__ import annotations
 
 import os
-import shutil
 import sys
 import tarfile
 import zipfile
@@ -34,9 +33,9 @@ from .runtime import (
     DEFAULT_BUILD,
     Platform,
     _archive_format,
-    download,
     detect_cuda_version,
     detect_platform,
+    download,
     has_cuda_runtime,
     resolve_build,
     server_binary,

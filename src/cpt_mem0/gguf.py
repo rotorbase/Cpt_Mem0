@@ -260,7 +260,6 @@ def read_profile(path: str | Path) -> ModelProfile:
     has_shared_kv = bool(arch("attention.shared_kv_layers"))
 
     model_name = meta.get("general.name") or path.stem
-    quant = meta.get("general.file_type")
     quant_label = _quantisation_from_name(path.name)
 
     # Hybrid architectures keep a recurrent state next to the KV cache.

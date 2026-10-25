@@ -20,7 +20,6 @@ if str(SRC) not in sys.path:
 
 from cpt_mem0.gguf import (  # noqa: E402
     GGUFError,
-    ModelProfile,
     read_profile,
 )
 

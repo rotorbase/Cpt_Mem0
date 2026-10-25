@@ -54,6 +54,13 @@ that `start` would use.
 
 ## Install
 
+**Windows:** download the package from the
+[releases](https://github.com/rotorbase/Cpt_Mem0/releases), unpack it
+anywhere, and run `Cpt_Mem0.exe`. The package is a folder with the
+`.exe` in it - see [docs/install-windows.md](docs/install-windows.md).
+
+From the source tree:
+
 ```
 cpt-mem0 init
 ```
@@ -111,6 +118,9 @@ See [docs/ui.md](docs/ui.md).
 | The on/off switch for the models | done, the store stays up |
 | The topic buttons (clustering over the stored vectors) | done |
 | Full memory CRUD (find, change, delete one, delete all, reset) | done, verified against the real mem0 |
+| The native window (pywebview on WebView2) | done, the .exe opens it |
+| The Windows package (PyInstaller, onedir) | done, 89 MB, the .exe is 17 MB |
+| The GitHub Actions build | done, the package is attached to every release |
 | llama.cpp bootstrap and self-update | done, installed and verified on this machine |
 | Daemon, REST and MCP server | done |
 | Store integration | done, Qdrant embedded with the mem0 engine |
@@ -146,6 +156,7 @@ See [SPEC.md](SPEC.md) for the full design and the open questions.
 | [docs/catalogue.md](docs/catalogue.md) | Model catalogue, file sizes, KV constants, resulting selections |
 | [docs/api.md](docs/api.md) | CLI, HTTP and MCP contracts |
 | [docs/ui.md](docs/ui.md) | The window: the switch, the topic buttons, the routes |
+| [docs/install-windows.md](docs/install-windows.md) | The Windows package, the autostart, the uninstall |
 | [docs/daemon.md](docs/daemon.md) | The daemon: the order of startup and shutdown |
 | [docs/runtime.md](docs/runtime.md) | The llama.cpp runtime, the update and the rollback |
 | [docs/testing.md](docs/testing.md) | How to run the tests, and what needs a free GPU |

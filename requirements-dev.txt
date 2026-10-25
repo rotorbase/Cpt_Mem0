@@ -1,0 +1,9 @@
+# What the tests need.
+#
+# The app's own dependencies are in requirements.txt. These are the
+# tools around it.
+
+-r requirements.txt
+
+pytest>=8.0
+ruff>=0.6

@@ -1257,6 +1257,46 @@ loads.
 
 The user's own mem0 stack keeps its telemetry as it is.
 
+## 16b. The Windows package
+
+The app is a folder with an `.exe` in it. The user downloads a zip
+from the releases, unpacks it and runs `Cpt_Mem0.exe`.
+
+**Why onedir and not onefile.** PyInstaller's onefile mode extracts
+the whole package to a temporary directory on every start. That is a
+slow first start, and a lot of antivirus software reports such a
+file. A folder starts in a second and is not reported.
+
+**The window is a WebView2.** That is the engine Edge already ships
+and every Windows 10 and 11 has it, so the app does not bring its own
+Chromium. The package stays small: 89 MB in total, 17 MB of it the
+`.exe`. Without pywebview the same three files open in the system
+browser - the interface is the same either way, only the frame around
+it is different.
+
+**The llama.cpp build is not in the package.** It is 700 MB with the
+CUDA runtime, and `cpt-mem0 init` downloads it separately, pinned to
+an exact build. It belongs on the disk of the machine, not in a zip
+that every user has to download.
+
+**The models open no console.** llama-server.exe is a console
+program. Without `CREATE_NO_WINDOW` Windows opens a console for it
+every time a model starts, and the user sees a black box blinking on
+the desktop. The app is a window, not a terminal.
+
+**The packaged app has no console either.** So everything that goes
+wrong around the window goes into `%LOCALAPPDATA%\cpt-mem0\logs\window.log`
+- the traceback and what pywebview says about the WebView2 runtime.
+
+**The autostart starts the daemon with the models off.** The task
+runs the `.exe` with `--suspend`: the window and the API are there,
+the VRAM stays free, and the models are loaded when the switch is
+pressed.
+
+**The build runs on GitHub Actions.** Every published release builds
+the package on `windows-latest`, checks that the `.exe` starts, and
+attaches the zip and its sha256 to the release.
+
 ## 17. Open questions
 
 ### 17.1 Resolved

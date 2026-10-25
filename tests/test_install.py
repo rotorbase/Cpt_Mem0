@@ -93,7 +93,6 @@ class TestInstall:
 
     def test_a_refused_install_leaves_the_pointer_alone(self, sandbox):
         """The running build must survive a failed install."""
-        from cpt_mem0.runtime import Platform
 
         good = _archive(sandbox / "good.zip")
         installer.install("b11838", archive=good,
@@ -226,7 +225,6 @@ class TestRuntimePlacement:
 
     def test_a_missing_runtime_is_refused_on_cuda(self, sandbox):
         """The silent CPU fallback. The install must not succeed."""
-        from cpt_mem0.runtime import Platform
 
         archive = _archive(sandbox / "build.zip")
         target = Platform("windows", "x64", cuda=True, cuda_version="13.4")

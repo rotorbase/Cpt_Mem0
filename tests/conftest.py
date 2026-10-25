@@ -18,9 +18,7 @@ if str(SRC) not in sys.path:
 
 from cpt_mem0.catalogue import (  # noqa: E402
     Catalogue,
-    CatalogueEntry,
-    Quantisation,
-    catalogue_from_dict,
+    default_catalogue_path,
     load_catalogue,
 )
 from cpt_mem0.planner import (  # noqa: E402
@@ -32,7 +30,7 @@ from cpt_mem0.planner import (  # noqa: E402
 
 @pytest.fixture(scope="session")
 def catalogue() -> Catalogue:
-    return load_catalogue(ROOT / "catalogue.json")
+    return load_catalogue(default_catalogue_path())
 
 
 @pytest.fixture

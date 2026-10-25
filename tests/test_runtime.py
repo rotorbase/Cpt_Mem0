@@ -145,7 +145,8 @@ class TestAssetSelection:
         assert asset["name"] == "llama-b11838-bin-ubuntu-x64.tar.gz"
 
     def test_macos_never_gets_a_cuda_asset(self):
-        target = Platform("macos", "arm64", cuda=False, cuda_version="")
+        """The asset names carry the platform - the macOS ones must
+        not carry a CUDA marker."""
         for name in REAL_ASSETS:
             if "macos" in name.lower():
                 assert "cuda" not in name.lower()

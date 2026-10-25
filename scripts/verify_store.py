@@ -298,7 +298,7 @@ def main() -> int:
         return 1
 
     store = VectorStore(store_path)
-    store.add_many(zip(FACTS, vectors))
+    store.add_many(zip(FACTS, vectors, strict=True))
     store.save()
     print(f"\n  stored {store.count} facts in {store_path}", flush=True)
     print(f"  dimension: {store.dimension}", flush=True)
@@ -307,7 +307,7 @@ def main() -> int:
     # normalised vectors, and a query vector has to live in the same
     # space, so the similarity between a fact and its own embedding is
     # 1.0.
-    for text, vector in zip(FACTS, vectors):
+    for text, vector in zip(FACTS, vectors, strict=True):
         score = cosine_similarity(vector, vector)
         if abs(score - 1.0) > 0.001:
             problems.append(f"the vector of {text[:32]!r} is not unit "
@@ -341,7 +341,7 @@ def main() -> int:
 
     print()
     for question, query_vector, wanted in zip(queries, query_vectors,
-                                              expected):
+                                              expected, strict=True):
         results = reloaded.search(query_vector, limit=len(FACTS))
         if not results:
             problems.append(f"the query {question!r} found nothing")

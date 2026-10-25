@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from cpt_mem0.catalogue import load_catalogue  # noqa: E402
+from cpt_mem0.catalogue import default_catalogue_path  # noqa: E402
 
 #: How much of the file the header needs. The metadata block of a
 #: multi-billion parameter model is well under this.
@@ -114,7 +114,7 @@ def fetch_header(url: str, timeout: int = 120) -> bytes:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--catalogue", default=str(ROOT / "catalogue.json"))
+    parser.add_argument("--catalogue", default=str(default_catalogue_path()))
     parser.add_argument("--write", action="store_true",
                         help="write the geometry back into the catalogue")
     args = parser.parse_args()
