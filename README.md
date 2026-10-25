@@ -81,17 +81,20 @@ cpt-mem0 update     # update the llama.cpp build (never automatic)
 | GGUF header reader | done |
 | VRAM planner | done |
 | Model catalogue | done, 6 models / 35 quantisations, all sizes and KV constants measured |
-| CLI (`plan`, `models`, `validate-catalogue`, `runtime`, `init`, `update`) | done |
+| CLI (`plan`, `models`, `validate-catalogue`, `runtime`, `init`, `update`, `start`, `stop`, `status`) | done |
 | llama.cpp bootstrap and self-update | done, installed and verified on this machine |
-| Daemon, REST and MCP server | not started |
-| Store integration | not started |
+| Daemon, REST and MCP server | done |
+| Store integration | done, Qdrant embedded with the mem0 engine |
 
 The test suite is pure logic: it reads no GPU and starts no model.
 
 ```
 $ pytest
-204 passed
+249 passed
 ```
+
+The daemon has not run end-to-end yet - that needs the runtime
+dependencies (`mem0ai`, `qdrant-client`) in the project environment.
 
 **Verified on this machine:** `cpt-mem0 init` installed build 11838 with
 the CUDA runtime, and `--list-devices` reports

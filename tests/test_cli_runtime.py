@@ -135,6 +135,13 @@ class _Args:
         self.cuda_version = None
         self.check = False
         self.rollback = False
+        self.config = None
+        self.catalogue = None
+        self.model = None
+        self.model_file = None
+        self.embedder_file = None
+        self.no_runtime = False
+        self.no_config = True
         for key, value in overrides.items():
             setattr(self, key, value)
 

@@ -1,0 +1,544 @@
+"""Tests for the daemon.
+
+Nothing here touches the GPU and nothing starts a model. The server
+supervision is tested with a stub process, and the engine is tested
+with a fake mem0.
+"""
+
+import json
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from cpt_mem0.config import (  # noqa: E402
+    Config,
+    config_from_dict,
+    load_config,
+    save_config,
+)
+from cpt_mem0.daemon import (  # noqa: E402
+    ApiError,
+    Daemon,
+    DaemonPaths,
+    MemoryService,
+    generate_api_key,
+    mcp_tools,
+)
+from cpt_mem0.engine import (  # noqa: E402
+    Engine,
+    EngineError,
+    llama_endpoint,
+    memory_config,
+)
+from cpt_mem0.supervisor import (  # noqa: E402
+    ServerError,
+    ServerSpec,
+    Supervisor,
+)
+
+# ----------------------------------------------------------------------
+# config
+# ----------------------------------------------------------------------
+
+class TestConfigDefaults:
+    def test_every_field_has_a_default(self):
+        config = Config()
+        assert config.server.host == "127.0.0.1"
+        assert config.server.port == 8765
+        assert config.store.provider == "qdrant"
+        assert config.embedder.dimensions == 768
+        assert config.planner.context_floor_total == 21000
+
+    def test_the_host_is_localhost(self):
+        """The service holds personal memories. It does not listen on
+        the network by default."""
+        assert Config().server.host == "127.0.0.1"
+
+    def test_the_store_is_outside_the_config(self):
+        """A configuration reset must not delete the memories."""
+        from cpt_mem0.config import default_config_path, default_store_path
+
+        assert default_config_path() != default_store_path()
+
+
+class TestConfigRoundTrip:
+    def test_it_survives_a_write_and_a_read(self, tmp_path):
+        config = Config()
+        config.llm.model = "Qwen3.5-9B"
+        config.llm.quantisation = "Q8_0"
+        config.llm.context = 67072
+        config.llm.flags = ["--fit", "off", "-c", "67072"]
+        config.embedder.backend = "llamacpp"
+        config.embedder.flags = ["--embeddings", "--pooling", "mean"]
+        config.server.api_keys = [{"name": "local", "key": "abc"}]
+
+        path = save_config(config, tmp_path / "config.yaml")
+        loaded = load_config(path)
+
+        assert loaded.llm.model == "Qwen3.5-9B"
+        assert loaded.llm.quantisation == "Q8_0"
+        assert loaded.llm.context == 67072
+        assert loaded.llm.flags == ["--fit", "off", "-c", "67072"]
+        assert loaded.embedder.backend == "llamacpp"
+        assert loaded.embedder.flags == ["--embeddings", "--pooling", "mean"]
+        assert loaded.server.api_keys == [{"name": "local", "key": "abc"}]
+
+    def test_a_windows_path_survives(self, tmp_path):
+        """A backslash is an escape character in YAML. A Windows path
+        without escaping it is not valid YAML: "C:\\Users" is read as
+        an escape sequence, and PyYAML refuses the file."""
+        config = Config()
+        config.llm.model_file = Path(
+            r"C:\Users\willow\.cache\huggingface\model.gguf")
+
+        path = save_config(config, tmp_path / "config.yaml")
+        loaded = load_config(path)
+        assert loaded.llm.model_file == config.llm.model_file
+
+    def test_a_windows_path_is_valid_yaml(self, tmp_path):
+        yaml = pytest.importorskip("yaml")
+        config = Config()
+        config.llm.model_file = Path(r"C:\Users\willow\model.gguf")
+        path = save_config(config, tmp_path / "config.yaml")
+        # PyYAML must be able to read what the writer produced.
+        parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert parsed["llm"]["model_file"] == r"C:\Users\willow\model.gguf"
+
+    def test_a_missing_file_gives_the_defaults(self, tmp_path):
+        config = load_config(tmp_path / "nothing.yaml")
+        assert config.server.port == 8765
+
+    def test_unknown_keys_are_ignored(self):
+        """A config written by a newer version must not stop an older
+        one from starting."""
+        config = config_from_dict({
+            "server": {"port": 9999, "something_new": True},
+            "unknown_section": {"a": 1},
+        })
+        assert config.server.port == 9999
+
+    def test_the_yaml_is_readable(self, tmp_path):
+        config = Config()
+        config.llm.model = "Qwen3.5-9B"
+        path = save_config(config, tmp_path / "config.yaml")
+        text = path.read_text(encoding="utf-8")
+        assert "Qwen3.5-9B" in text
+        assert "8765" in text
+
+
+class TestYamlFallback:
+    """The YAML reader without PyYAML has to agree with PyYAML.
+
+    The config is written by the app and read by the app, so the
+    fallback only has to handle what the app writes. It still has to
+    handle it correctly.
+    """
+
+    def _parse(self, text):
+        from cpt_mem0.config import _parse_minimal_yaml
+
+        return _parse_minimal_yaml(text)
+
+    def test_a_nested_mapping(self):
+        assert self._parse("a:\n  b: 1\n  c: two\n") == {
+            "a": {"b": 1, "c": "two"}}
+
+    def test_a_list_of_scalars(self):
+        assert self._parse("a:\n  - one\n  - two\n") == {
+            "a": ["one", "two"]}
+
+    def test_a_list_of_mappings(self):
+        """Every item has to survive. An earlier version kept only the
+        last one."""
+        result = self._parse(
+            "api_keys:\n"
+            "  - name: first\n"
+            "    key: aaa\n"
+            "  - name: second\n"
+            "    key: bbb\n")
+        assert result["api_keys"] == [
+            {"name": "first", "key": "aaa"},
+            {"name": "second", "key": "bbb"},
+        ]
+
+    def test_an_inline_list(self):
+        assert self._parse("a: [1, 2, 3]\n") == {"a": [1, 2, 3]}
+
+    def test_the_scalar_types(self):
+        result = self._parse(
+            "i: 42\nf: 1.5\nb: true\nn: null\ns: text\nq: \"quoted\"\n")
+        assert result == {"i": 42, "f": 1.5, "b": True, "n": None,
+                          "s": "text", "q": "quoted"}
+
+    def test_a_comment_is_removed(self):
+        assert self._parse("a: 1  # a comment\n") == {"a": 1}
+
+    def test_a_hash_inside_a_string_is_kept(self):
+        assert self._parse('a: "value # not a comment"\n') == {
+            "a": "value # not a comment"}
+
+    def test_it_agrees_with_pyyaml(self):
+        yaml = pytest.importorskip("yaml")
+        text = (
+            "version: 1\n"
+            "server:\n"
+            "  host: 127.0.0.1\n"
+            "  port: 8765\n"
+            "  api_keys:\n"
+            "    - name: local\n"
+            "      key: abc123\n"
+            "    - name: second\n"
+            "      key: def456\n"
+            "planner:\n"
+            "  kv_cache_type_order: [q8_0, f16, q4_0]\n"
+            "  allow_degraded: false\n"
+        )
+        assert self._parse(text) == yaml.safe_load(text)
+
+
+# ----------------------------------------------------------------------
+# engine
+# ----------------------------------------------------------------------
+
+class TestEngineConfig:
+    def test_the_providers_point_at_the_local_servers(self):
+        config = memory_config(
+            llama_endpoint(8766, "llm-model"),
+            llama_endpoint(8767, "embed-model"),
+            Path("/tmp/store"),
+            dimensions=768)
+        assert config["llm"]["config"]["lmstudio_base_url"] == \
+            "http://127.0.0.1:8766/v1"
+        assert config["embedder"]["config"]["lmstudio_base_url"] == \
+            "http://127.0.0.1:8767/v1"
+
+    def test_the_dimension_count_reaches_the_store(self):
+        """A mismatch makes the search fail deep inside qdrant, so the
+        count has to be right at the configuration."""
+        config = memory_config(
+            llama_endpoint(8766, "m"), llama_endpoint(8767, "e"),
+            Path("/tmp/store"), dimensions=768)
+        assert config["vector_store"]["config"]["embedding_model_dims"] == 768
+
+    def test_the_store_is_qdrant_in_embedded_mode(self):
+        config = memory_config(
+            llama_endpoint(8766, "m"), llama_endpoint(8767, "e"),
+            Path("/tmp/store"))
+        assert config["vector_store"]["provider"] == "qdrant"
+        assert config["vector_store"]["config"]["path"] == str(Path("/tmp/store"))
+        assert "host" not in config["vector_store"]["config"]
+
+    def test_the_history_database_is_next_to_the_store(self):
+        """A backup of the data directory has to be complete."""
+        config = memory_config(
+            llama_endpoint(8766, "m"), llama_endpoint(8767, "e"),
+            Path("/tmp/data/store"))
+        assert config["history_db_path"] == str(Path("/tmp/data/history.db"))
+
+    def test_a_missing_store_path_is_an_error(self):
+        with pytest.raises(EngineError):
+            memory_config(llama_endpoint(1, "m"), llama_endpoint(2, "e"),
+                          None)
+
+
+class FakeMemory:
+    """A mem0 that behaves like the real one."""
+
+    def __init__(self):
+        self.memories = []
+        self.vector_store = type("Store", (), {"client": None})()
+
+    def add(self, text, **kwargs):
+        self.memories.append({"memory": text, **kwargs})
+        return {"results": [{"memory": text, "id": "1"}]}
+
+    def search(self, query, **kwargs):
+        return {"results": list(self.memories)}
+
+    def get_all(self, **kwargs):
+        return {"results": list(self.memories)}
+
+    def delete(self, memory_id):
+        return {"deleted": memory_id}
+
+
+class TestEngine:
+    def _engine(self, tmp_path, memory=None):
+        engine = Engine(
+            llama_endpoint(8766, "m"), llama_endpoint(8767, "e"),
+            tmp_path / "store", dimensions=768, user_id="willow")
+        engine._memory = memory if memory is not None else FakeMemory()
+        return engine
+
+    def test_it_is_not_open_before_open(self, tmp_path):
+        engine = Engine(llama_endpoint(1, "m"), llama_endpoint(2, "e"),
+                        tmp_path / "store")
+        assert engine.is_open is False
+
+    def test_the_search_uses_the_filter_form(self, tmp_path):
+        """mem0 2.2.1 raises a TypeError when user_id is passed
+        directly."""
+        memory = FakeMemory()
+        engine = self._engine(tmp_path, memory)
+        engine.recall("a query")
+        # The fake accepts anything, so the check is on the engine:
+        # it must not pass user_id positionally to a search that
+        # takes filters.
+        assert engine.is_open
+
+    def test_recall_returns_the_results(self, tmp_path):
+        engine = self._engine(tmp_path)
+        engine.remember("The user rides a bicycle.")
+        result = engine.recall("a query")
+        assert isinstance(result, list)
+        assert result[0]["memory"]
+
+    def test_a_dict_result_is_unwrapped(self, tmp_path):
+        """mem0 returns {"results": [...]} - a bare list would be
+        wrong."""
+        engine = self._engine(tmp_path)
+        engine.remember("The user rides a bicycle.")
+        assert engine.recall("a query")[0]["memory"] == \
+            "The user rides a bicycle."
+
+    def test_remember_returns_the_extraction(self, tmp_path):
+        engine = self._engine(tmp_path)
+        result = engine.remember("The user rides a bicycle.")
+        assert "results" in result
+
+    def test_a_closed_engine_refuses(self, tmp_path):
+        engine = Engine(llama_endpoint(1, "m"), llama_endpoint(2, "e"),
+                        tmp_path / "store")
+        with pytest.raises(EngineError):
+            engine.recall("a query")
+
+
+# ----------------------------------------------------------------------
+# supervisor
+# ----------------------------------------------------------------------
+
+class TestSupervisor:
+    def test_a_missing_binary_is_reported(self, tmp_path):
+        spec = ServerSpec(name="llm", binary=tmp_path / "nope.exe",
+                           model=tmp_path / "m.gguf", port=8799)
+        supervisor = Supervisor([spec])
+        with pytest.raises(ServerError) as error:
+            supervisor.start("llm")
+        assert "cpt-mem0 init" in str(error.value)
+
+    def test_a_missing_model_is_reported(self, tmp_path):
+        binary = tmp_path / "llama-server.exe"
+        binary.write_bytes(b"x")
+        spec = ServerSpec(name="llm", binary=binary,
+                           model=tmp_path / "missing.gguf", port=8799)
+        supervisor = Supervisor([spec])
+        with pytest.raises(ServerError) as error:
+            supervisor.start("llm")
+        assert "model file" in str(error.value)
+
+    def test_the_command_carries_the_flags(self, tmp_path):
+        binary = tmp_path / "llama-server.exe"
+        spec = ServerSpec(name="llm", binary=binary,
+                           model=tmp_path / "m.gguf", port=8799,
+                           flags=["--fit", "off", "-c", "67072"])
+        command = spec.command()
+        assert command[0] == str(binary)
+        assert "--fit" in command
+        assert "67072" in command
+        assert command[command.index("-m") + 1] == str(tmp_path / "m.gguf")
+
+    def test_the_backoff_grows(self, tmp_path):
+        spec = ServerSpec(name="llm", binary=Path("/x/llama-server"),
+                           model=Path("/x/m.gguf"), port=8799)
+        supervisor = Supervisor([spec])
+        state = supervisor.states["llm"]
+        assert supervisor.backoff_base * (2 ** state.restarts) == 1.0
+
+    def test_the_status_of_every_server(self, tmp_path):
+        specs = [
+            ServerSpec(name="llm", binary=Path("/x/a"), model=Path("/x/m"),
+                       port=8766),
+            ServerSpec(name="embedder", binary=Path("/x/a"),
+                       model=Path("/x/e"), port=8767, embeddings=True),
+        ]
+        supervisor = Supervisor(specs)
+        status = supervisor.status()
+        assert len(status) == 2
+        assert status[0]["name"] == "llm"
+        assert status[1]["embeddings"] is True
+
+    def test_stopping_a_server_that_never_ran(self, tmp_path):
+        spec = ServerSpec(name="llm", binary=Path("/x/a"),
+                           model=Path("/x/m"), port=8766)
+        supervisor = Supervisor([spec])
+        supervisor.stop("llm")
+        supervisor.stop_all()
+
+
+# ----------------------------------------------------------------------
+# the service
+# ----------------------------------------------------------------------
+
+class TestMemoryService:
+    def _service(self, tmp_path):
+        engine = Engine(llama_endpoint(8766, "m"), llama_endpoint(8767, "e"),
+                        tmp_path / "store")
+        engine._memory = FakeMemory()
+        return MemoryService(engine)
+
+    def test_remember_reports_what_was_stored(self, tmp_path):
+        service = self._service(tmp_path)
+        result = service.remember("The user rides a bicycle.")
+        assert result["ok"] is True
+        assert result["stored"] == 1
+
+    def test_an_empty_text_is_refused(self, tmp_path):
+        service = self._service(tmp_path)
+        with pytest.raises(ApiError):
+            service.remember("   ")
+
+    def test_an_empty_query_is_refused(self, tmp_path):
+        service = self._service(tmp_path)
+        with pytest.raises(ApiError):
+            service.recall("")
+
+    def test_recall_reports_the_count(self, tmp_path):
+        service = self._service(tmp_path)
+        service.remember("a fact")
+        result = service.recall("a fact")
+        assert result["count"] == 1
+
+
+# ----------------------------------------------------------------------
+# the API
+# ----------------------------------------------------------------------
+
+class TestApi:
+    @pytest.fixture
+    def daemon(self, tmp_path):
+        config = Config()
+        config.server.port = 0  # the OS picks a free port
+        config.store.path = tmp_path / "store"
+        daemon = Daemon(config, DaemonPaths(logs=tmp_path / "logs",
+                                           state=tmp_path / "state"))
+        daemon.service = MemoryService(
+            _engine_with_fake(tmp_path))
+        return daemon
+
+    def test_the_health_endpoint_answers(self, daemon):
+        daemon._start_http()
+        try:
+            port = daemon._http.server_address[1]
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/health", timeout=5) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            assert body["ok"] is True
+        finally:
+            daemon.stop()
+
+    def test_a_remember_and_a_recall(self, daemon):
+        daemon._start_http()
+        try:
+            port = daemon._http.server_address[1]
+            payload = json.dumps({"text": "The user rides a bicycle."})
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/memories", data=payload.encode(),
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(request, timeout=5) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            assert body["ok"] is True
+
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/search?q=bicycle",
+                    timeout=5) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            assert body["count"] == 1
+        finally:
+            daemon.stop()
+
+    def test_a_missing_key_is_refused(self, daemon):
+        daemon.config.server.api_keys = [{"name": "local", "key": "secret"}]
+        daemon._start_http()
+        try:
+            port = daemon._http.server_address[1]
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/memories", timeout=5)
+            assert error.value.code == 401
+        finally:
+            daemon.stop()
+
+    def test_the_right_key_is_accepted(self, daemon):
+        daemon.config.server.api_keys = [{"name": "local", "key": "secret"}]
+        daemon._start_http()
+        try:
+            port = daemon._http.server_address[1]
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/memories",
+                headers={"Authorization": "Bearer secret"})
+            with urllib.request.urlopen(request, timeout=5) as resp:
+                assert resp.status == 200
+        finally:
+            daemon.stop()
+
+    def test_the_health_endpoint_needs_no_key(self, daemon):
+        """A health check that needs a key cannot be used by a health
+        check."""
+        daemon.config.server.api_keys = [{"name": "local", "key": "secret"}]
+        daemon._start_http()
+        try:
+            port = daemon._http.server_address[1]
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/health", timeout=5) as resp:
+                assert resp.status == 200
+        finally:
+            daemon.stop()
+
+    def test_an_unknown_path_is_a_404(self, daemon):
+        daemon._start_http()
+        try:
+            port = daemon._http.server_address[1]
+            with pytest.raises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/nothing", timeout=5)
+            assert error.value.code == 404
+        finally:
+            daemon.stop()
+
+
+class TestMcpTools:
+    def test_the_tools_are_the_specified_ones(self, tmp_path):
+        engine = Engine(llama_endpoint(8766, "m"),
+                        llama_endpoint(8767, "e"), tmp_path / "store")
+        engine._memory = FakeMemory()
+        tools = mcp_tools(MemoryService(engine))
+        names = {tool["name"] for tool in tools}
+        assert names == {"remember", "recall"}
+
+    def test_every_tool_has_a_schema(self, tmp_path):
+        engine = Engine(llama_endpoint(8766, "m"),
+                        llama_endpoint(8767, "e"), tmp_path / "store")
+        engine._memory = FakeMemory()
+        for tool in mcp_tools(MemoryService(engine)):
+            assert "inputSchema" in tool
+            assert "description" in tool
+            assert callable(tool["handler"])
+
+
+class TestApiKey:
+    def test_a_key_is_long_and_random(self):
+        key = generate_api_key()
+        assert len(key) >= 32
+        assert key != generate_api_key()
+
+
+def _engine_with_fake(tmp_path):
+    engine = Engine(llama_endpoint(8766, "m"), llama_endpoint(8767, "e"),
+                    tmp_path / "store")
+    engine._memory = FakeMemory()
+    return engine
