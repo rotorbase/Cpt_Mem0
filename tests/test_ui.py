@@ -217,6 +217,103 @@ class TestTheRoutes:
         assert "voice" in data
 
 
+class TestABrokenClient:
+    """A client that goes away is not an error.
+
+    The browser closes the connection while the answer is being
+    written - it happens on every reload and on every screenshot -
+    and the traceback that came out of it looked like a crash of the
+    daemon.
+    """
+
+    def test_a_broken_connection_is_swallowed(self, daemon):
+        """The answer fails, but the daemon does not."""
+        import socket
+        import urllib.request
+
+        daemon._start_http()
+        port = daemon._http.server_address[1]
+        try:
+            # A client that connects and closes at once.
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            try:
+                sock.connect(("127.0.0.1", port))
+                sock.sendall(
+                    b"GET /status HTTP/1.1\r\nHost: x\r\n\r\n")
+                sock.close()
+            except OSError:
+                pass
+
+            # The daemon is still there and answers.
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/status", timeout=5) as response:
+                assert response.status == 200
+        finally:
+            daemon._http.shutdown()
+            daemon._http.server_close()
+
+    def test_the_handler_catches_it(self):
+        """The write is wrapped."""
+        import inspect
+
+        from cpt_mem0.daemon import _make_handler
+
+        source = inspect.getsource(_make_handler)
+        assert "ConnectionAbortedError" in source
+        assert "BrokenPipeError" in source
+
+    def test_the_server_catches_it(self):
+        """The reading of the request line is on the server.
+
+        The traceback came from two places: the handler wrote the
+        answer, and the server read the request line. Both have to be
+        covered - the second one is the one that happened in the
+        practice.
+        """
+        import inspect
+
+        from cpt_mem0.daemon import _QuietHTTPServer
+
+        source = inspect.getsource(_QuietHTTPServer.handle_error)
+        assert "ConnectionAbortedError" in source
+        assert "ConnectionResetError" in source
+        assert "BrokenPipeError" in source
+
+    def test_no_traceback_when_the_client_goes_away(self, daemon, capsys):
+        """Ten clients that disconnect at once - and nothing is
+        printed."""
+        import socket
+        import time
+
+        daemon._start_http()
+        port = daemon._http.server_address[1]
+        try:
+            for _ in range(10):
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                try:
+                    sock.connect(("127.0.0.1", port))
+                    sock.sendall(
+                        b"GET /status HTTP/1.1\r\nHost: x\r\n\r\n")
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                    b"\x01\x00\x00\x00\x00\x00\x00\x00")
+                    sock.close()
+                except OSError:
+                    pass
+                time.sleep(0.02)
+
+            time.sleep(0.5)
+        finally:
+            daemon._http.shutdown()
+            daemon._http.server_close()
+
+        printed = capsys.readouterr()
+        assert "Traceback" not in printed.err
+        assert "ConnectionResetError" not in printed.err
+        assert "ConnectionAbortedError" not in printed.err
+
+
 class TestSuspend:
     """The on/off switch: the models stop, the memory stays."""
 

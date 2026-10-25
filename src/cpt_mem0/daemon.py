@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import secrets
+import sys
 import threading
 import time
 import urllib.parse
@@ -55,6 +56,28 @@ class DaemonPaths:
         from .install import data_dir
 
         return cls.under(data_dir())
+
+
+class _QuietHTTPServer(ThreadingHTTPServer):
+    """The HTTP server of the daemon.
+
+    **A client that goes away is not an error.** The browser closes
+    the connection while the request is being read or while the answer
+    is being written - on every reload, on every screenshot, on every
+    tab that is closed. The standard handler prints a traceback for
+    it, and it looks like a crash of the daemon.
+
+    The traceback comes from two places: the reading of the request
+    line and the writing of the answer. The second one is caught in
+    the handler; this one is here.
+    """
+
+    def handle_error(self, request, client_address) -> None:
+        error = sys.exc_info()[1]
+        if isinstance(error, (ConnectionAbortedError,
+                              ConnectionResetError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
 
 
 class ApiError(Exception):
@@ -352,7 +375,7 @@ class Daemon:
     def _start_http(self) -> None:
         """Start the HTTP server."""
         handler = _make_handler(self)
-        self._http = ThreadingHTTPServer(
+        self._http = _QuietHTTPServer(
             (self.config.server.host, self.config.server.port), handler)
         self._http.daemon_threads = True
         self._thread = threading.Thread(
@@ -791,12 +814,24 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
         # -- helpers ---------------------------------------------------
 
         def _send(self, status: int, payload: Any) -> None:
+            """Answer the request.
+
+            **A client that goes away is not an error.** The browser
+            closes the connection while the answer is being written -
+            it happens every time a page is reloaded or a screenshot
+            is taken - and the traceback that came out of it looked
+            like a crash of the daemon. It is normal operation.
+            """
             body = json.dumps(payload, default=str).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+            except (ConnectionAbortedError, ConnectionResetError,
+                    BrokenPipeError):
+                pass
 
         def _read_body(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or 0)
