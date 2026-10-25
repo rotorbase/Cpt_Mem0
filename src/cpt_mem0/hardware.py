@@ -32,7 +32,9 @@ class GpuInfo:
 
 def _run(cmd: list[str]) -> tuple[int, str]:
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return 1, ""
     return proc.returncode, proc.stdout

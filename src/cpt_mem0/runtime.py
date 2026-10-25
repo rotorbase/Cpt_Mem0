@@ -123,7 +123,8 @@ def detect_cuda_version() -> str | None:
         import subprocess
         result = subprocess.run(
             [exe, "--query-gpu=driver_version", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=15)
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15)
     except (OSError, ValueError):
         return None
     if result.returncode != 0:

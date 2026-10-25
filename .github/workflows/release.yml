@@ -43,16 +43,46 @@ jobs:
         run: python packaging/build_windows.py
 
       - name: Check the package starts
-        # The exe must at least start and answer. The window needs a
-        # desktop, so the check is the daemon behind it.
+        # The exe has to start and answer.
+        #
+        # **The exit code of `status` is not always 0.** It reports
+        # "not running" with its own code when there is no daemon -
+        # and on the runner there is none. The check looks at what
+        # the exe printed, not at the exit code.
         shell: pwsh
         run: |
           $exe = "dist\Cpt_Mem0\Cpt_Mem0.exe"
           if (-not (Test-Path $exe)) { throw "no exe" }
-          $process = Start-Process -FilePath $exe -ArgumentList "status" -PassThru -NoNewWindow
-          $process.WaitForExit(60000) | Out-Null
-          if ($process.ExitCode -ne 0) { throw "the exe returned $($process.ExitCode)" }
-          Write-Host "the exe starts"
+
+          # The exe is a windowed program: it has no console, so its
+          # output goes nowhere unless it is redirected into a file.
+          # A pipe would capture nothing.
+          & $exe --help > help.txt 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "the exe returned $LASTEXITCODE" }
+          $help = Get-Content help.txt -Raw
+          if ($help -notmatch "ui") {
+            throw "the exe printed nothing useful: $help"
+          }
+          Write-Host "the exe starts and knows its commands"
+
+          & $exe status > status.txt 2>&1
+          $status = Get-Content status.txt -Raw
+          if ($status -notmatch "daemon:") {
+            throw "the exe printed nothing useful: $status"
+          }
+          Write-Host "the exe reports the state"
+          Write-Host $status
+
+      - name: Keep the test output
+        # When the tests fail on the runner, the log has to be
+        # somewhere. Without this the only clue is "exit code 1".
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs
+          path: results/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload the package
         uses: actions/upload-artifact@v4

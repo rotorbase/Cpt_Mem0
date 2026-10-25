@@ -337,6 +337,26 @@ class Supervisor:
         return result
 
 
+def _read_command(command: list[str]) -> str | None:
+    """Run a command and return its output.
+
+    **The encoding is UTF-8 and errors are replaced.** nvidia-smi
+    writes UTF-8, and the default on Windows is cp1252 - a byte like
+    0x81 raises a UnicodeDecodeError in the reader thread, the output
+    comes back as None, and the code that reads it fails with a
+    TypeError about None not being iterable. The error message names
+    neither the command nor the encoding.
+    """
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout
+
+
 def gpu_used_mib() -> int | None:
     """The VRAM used on the card.
 
@@ -351,7 +371,8 @@ def gpu_used_mib() -> int | None:
     try:
         result = subprocess.run(
             [exe, "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=15)
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15)
     except (OSError, ValueError):
         return None
     if result.returncode != 0:
@@ -377,7 +398,8 @@ def gpu_free_mib() -> int | None:
     try:
         result = subprocess.run(
             [exe, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=15)
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15)
     except (OSError, ValueError):
         return None
     if result.returncode != 0:
@@ -403,7 +425,8 @@ def process_vram_mib(pid: int) -> int | None:
         result = subprocess.run(
             [exe, "--query-compute-apps=pid,used_memory",
              "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=15)
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15)
     except (OSError, ValueError):
         return None
     if result.returncode != 0:

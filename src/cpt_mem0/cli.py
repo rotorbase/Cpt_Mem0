@@ -511,15 +511,25 @@ def cmd_stop(args) -> int:
 
 
 def _process_alive(pid: int) -> bool:
-    """Whether a process is running."""
+    """Whether a process is running.
+
+    **tasklist writes the system encoding, not UTF-8.** With the
+    default the reader thread raises a UnicodeDecodeError, the output
+    comes back as None, and ``str(pid) in None`` fails with a
+    TypeError about None not being iterable. The error names neither
+    the command nor the encoding - it looks like a bug in the status
+    command.
+    """
     if os.name == "nt":
         try:
             result = subprocess.run(
                 ["tasklist", "/FI", f"PID eq {pid}"],
-                capture_output=True, text=True, timeout=10)
-            return str(pid) in result.stdout
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=10)
         except (OSError, ValueError, subprocess.SubprocessError):
             return False
+        output = result.stdout or ""
+        return str(pid) in output
     try:
         os.kill(pid, 0)
     except OSError:
@@ -591,7 +601,7 @@ def cmd_status(args) -> int:
             running = False
 
     print(f"daemon:    {'running' if running else 'not running'}"
-          + (f" (pid {pid})" if pid else ""))
+          + (f" (pid {pid})" if running and pid else ""))
     print(f"VRAM:      {gpu_used_mib()} MiB used")
 
     config_path = Path(args.config) if args.config else None
@@ -715,10 +725,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
 
     # A bare flag belongs to the window: the app is a window, and
-    # ``Cpt_Mem0.exe --suspend`` means ``ui --suspend``.
+    # ``Cpt-Mem0.exe --suspend`` means ``ui --suspend``.
+    #
+    # **Only the flags of the window.** ``--help`` belongs to the
+    # main command, and without this the exe would print the help of
+    # the window instead of the list of the commands.
+    window_flags = ("--suspend", "--no-browser")
     if argv is None:
         argv = sys.argv[1:]
-    if argv and argv[0].startswith("-"):
+    if argv and argv[0] in window_flags:
         argv = ["ui"] + list(argv)
 
     args = parser.parse_args(argv)

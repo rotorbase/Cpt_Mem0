@@ -558,11 +558,13 @@ class Daemon:
         try:
             if enabled:
                 subprocess.run(command, shell=True, capture_output=True,
-                               timeout=30)
+                               text=True, encoding="utf-8",
+                               errors="replace", timeout=30)
             else:
                 delete = 'schtasks /Delete /TN "' + task_name + '" /F'
                 subprocess.run(delete, shell=True, capture_output=True,
-                               timeout=30)
+                               text=True, encoding="utf-8",
+                               errors="replace", timeout=30)
         except (OSError, subprocess.SubprocessError):
             pass
 

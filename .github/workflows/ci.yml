@@ -38,7 +38,22 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: The tests
-        run: python -m pytest tests/ -q
+        run: |
+          New-Item -ItemType Directory -Force -Path results | Out-Null
+          python -m pytest tests/ -q --tb=short -ra 2>&1 |
+            Tee-Object -FilePath results/pytest.txt
+          exit $LASTEXITCODE
+
+      - name: Keep the test output
+        # When the tests fail on the runner, the log has to be
+        # somewhere. Without this the only clue is "exit code 1".
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-test-output
+          path: results/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: The linter
         run: |

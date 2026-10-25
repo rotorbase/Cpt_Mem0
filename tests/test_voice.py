@@ -190,13 +190,58 @@ class TestTheDaemon:
         assert result["settings"]["voice"] is True
 
 
+@pytest.fixture
+def without_voices(monkeypatch):
+    """A machine with the speech engine but without any voice.
+
+    That is what a Windows Server looks like: the engine is part of
+    Windows, the voices are a language feature the server images do
+    not carry.
+    """
+    import win32com.client
+
+    class EmptyVoices:
+        Count = 0
+
+        def Item(self, index):
+            raise IndexError(index)
+
+    class FakeVoice:
+        def GetVoices(self):
+            return EmptyVoices()
+
+        def Speak(self, text, flags=0):
+            return 0
+
+        def set_Voice(self, item):
+            raise RuntimeError("there is no voice to set")
+
+    original = win32com.client.Dispatch
+
+    def fake_dispatch(name, *args, **kwargs):
+        if name == "SAPI.SpVoice":
+            return FakeVoice()
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(win32com.client, "Dispatch", fake_dispatch)
+    yield
+
+
 @pytest.mark.skipif(not available(), reason="no speech engine here")
 class TestOnThisMachine:
+    """The tests of the machine that runs them.
+
+    **A Windows Server has the speech engine but no voices.** The
+    engine is part of Windows, the voices are a language feature that
+    the server images do not carry. So the tests may not require a
+    voice - they check what happens with one.
+    """
+
     def test_the_voices_are_listed(self):
         found = voices()
-        assert found
         for voice in found:
             assert voice["name"]
+            assert voice["description"]
 
     def test_the_german_voice_is_preferred(self):
         """The facts are in whatever language the user writes in."""
@@ -206,4 +251,23 @@ class TestOnThisMachine:
 
         voice = win32com.client.Dispatch("SAPI.SpVoice")
         picked = _pick_voice(voice, "German")
-        assert picked.GetVoices().Count >= 1
+        # With no voice installed the voice stays as it is - the
+        # point is that it does not crash.
+        assert picked is not None
+
+    def test_it_works_without_any_voice(self, without_voices):
+        """A Windows Server has the engine but no voices. Nothing may
+        break there."""
+        from cpt_mem0.voice import Speaker, voices
+
+        assert voices() == []
+
+        speaker = Speaker()
+        # It hands the text over; the failure happens in the thread
+        # and is swallowed there.
+        assert speaker.speak("Ein Satz.") is True
+
+    def test_the_voice_list_is_empty_without_voices(self, without_voices):
+        from cpt_mem0.voice import voices
+
+        assert voices() == []

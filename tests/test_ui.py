@@ -364,6 +364,23 @@ class TestThePackagedApp:
         assert args.suspend is True
         assert args.func.__name__ == "cmd_ui"
 
+    def test_the_help_is_not_the_window_help(self, capsys):
+        """``--help`` belongs to the main command.
+
+        The exe would otherwise print the help of the window instead
+        of the list of the commands.
+        """
+        from cpt_mem0.cli import main
+
+        with pytest.raises(SystemExit):
+            main(["--help"])
+
+        printed = capsys.readouterr().out
+        # The list of the commands.
+        assert "validate-catalogue" in printed
+        # And not the help of the window.
+        assert "--no-browser" not in printed
+
     def test_the_main_maps_a_bare_flag(self):
         """The mapping happens before argparse sees it."""
         from cpt_mem0 import cli
