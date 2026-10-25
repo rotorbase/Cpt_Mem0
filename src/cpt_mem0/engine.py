@@ -249,15 +249,23 @@ class Engine:
 
         The search uses the filter form: ``filters={"user_id": ...}``.
         Passing ``user_id`` directly raises a TypeError in mem0 2.2.1.
+
+        The parameter is ``top_k``, not ``limit`` - measured on the
+        mem0 2.2.1 signature. Passing ``limit=`` raises a TypeError,
+        and the fallback would put the user id where ``top_k``
+        belongs.
         """
         memory = self._require_open()
         try:
             result = memory.search(
                 query,
                 filters={"user_id": user_id or self.user_id},
-                limit=limit)
+                top_k=limit)
         except TypeError:
-            result = memory.search(query, user_id or self.user_id, limit=limit)
+            result = memory.search(
+                query,
+                filters={"user_id": user_id or self.user_id},
+                limit=limit)
         return _as_list(result)
 
     def all(self, user_id: str | None = None) -> list[dict[str, Any]]:

@@ -252,12 +252,21 @@ class FakeMemory:
     def __init__(self):
         self.memories = []
         self.vector_store = type("Store", (), {"client": None})()
+        self.last_search = None
 
     def add(self, text, **kwargs):
         self.memories.append({"memory": text, **kwargs})
         return {"results": [{"memory": text, "id": "1"}]}
 
     def search(self, query, **kwargs):
+        """The real signature is (query, top_k, filters, ...).
+
+        A wrong keyword raises a TypeError, and the fallback would
+        put the user id where top_k belongs.
+        """
+        self.last_search = kwargs
+        if "top_k" not in kwargs:
+            raise TypeError("search() got an unexpected keyword argument")
         return {"results": list(self.memories)}
 
     def get_all(self, **kwargs):
@@ -286,10 +295,16 @@ class TestEngine:
         memory = FakeMemory()
         engine = self._engine(tmp_path, memory)
         engine.recall("a query")
-        # The fake accepts anything, so the check is on the engine:
-        # it must not pass user_id positionally to a search that
-        # takes filters.
-        assert engine.is_open
+        assert memory.last_search["filters"] == {"user_id": "willow"}
+
+    def test_the_search_uses_top_k(self, tmp_path):
+        """The parameter is top_k, not limit - measured on the mem0
+        2.2.1 signature. With limit the call raises, and the fallback
+        would put the user id where top_k belongs."""
+        memory = FakeMemory()
+        engine = self._engine(tmp_path, memory)
+        engine.recall("a query", limit=3)
+        assert memory.last_search["top_k"] == 3
 
     def test_recall_returns_the_results(self, tmp_path):
         engine = self._engine(tmp_path)
