@@ -185,8 +185,17 @@ class Daemon:
     def __init__(self, config: Config, paths: DaemonPaths) -> None:
         self.config = config
         self.paths = paths
-        self.supervisor = Supervisor(self._server_specs(),
-                                     on_event=self._log_event)
+        # The servers are built here, but a missing runtime is not
+        # an error yet: the daemon has to start so the window comes
+        # up and can say what is missing. The models are only needed
+        # when they are switched on.
+        self.supervisor = Supervisor([], on_event=self._log_event)
+        self._runtime_error = ""
+        try:
+            self.supervisor = Supervisor(self._server_specs(),
+                                         on_event=self._log_event)
+        except ServerError as error:
+            self._runtime_error = str(error)
         self.service: MemoryService | None = None
         self.engine: Engine | None = None
         self.started_at: float = 0.0
@@ -208,7 +217,12 @@ class Daemon:
     # ------------------------------------------------------------------
 
     def _server_specs(self) -> list[ServerSpec]:
-        """The servers the daemon supervises."""
+        """The servers the daemon supervises.
+
+        **A missing runtime is not an error here.** The daemon comes
+        up without it, the window shows it, and the switch says what
+        is missing. Only switching the models on needs the runtime.
+        """
         from .install import current_installation
 
         installation = current_installation()
@@ -272,6 +286,12 @@ class Daemon:
 
         if suspend:
             self.suspended = True
+        elif self._runtime_error:
+            # Without the runtime there are no models to start. The
+            # daemon comes up anyway - the window says what is
+            # missing.
+            self.suspended = True
+            self._log_event("runtime", self._runtime_error)
         else:
             for spec in self.supervisor.states:
                 self.supervisor.start(spec, timeout=timeout)
@@ -399,9 +419,17 @@ class Daemon:
         return {"suspended": True}
 
     def resume(self, timeout: float = 180.0) -> dict[str, Any]:
-        """Start the models again."""
+        """Start the models again.
+
+        **Without the runtime this is an error with a clear
+        message**, not a crash: "run cpt-mem0 init first". The window
+        shows it.
+        """
         if not self.suspended:
             return {"suspended": False, "already": True}
+
+        if self._runtime_error:
+            raise ApiError(self._runtime_error, status=503)
 
         for spec in self.supervisor.states:
             self.supervisor.start(spec, timeout=timeout)
@@ -714,6 +742,7 @@ class Daemon:
             "store_open": self.engine is not None and self.engine.is_open,
             "memories": count,
             "warnings": warnings,
+            "runtime_error": self._runtime_error,
         }
 
 

@@ -5,6 +5,8 @@ runs against a temporary directory with a local archive, so nothing is
 downloaded and nothing outside the test is touched.
 """
 
+import os
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -253,3 +255,81 @@ class TestNoSideEffects:
 
         assert model.read_bytes() == b"weights"
         assert store_file.read_text(encoding="utf-8") == "[]"
+
+
+class TestThePointerShapes:
+    """The pointer has three shapes and all three have to work.
+
+    - A symlink to the build.
+    - A text file with the name in it.
+    - A directory junction.
+
+    The junction is the reason this file exists: a junction is
+    neither a symlink nor a file, so a reader that only knows the
+    first two reads it as "nothing is installed" - and as a directory
+    it also shows up in the list of the builds. On a machine where
+    the symlink worked and on one where it did not, the same code
+    behaved differently.
+    """
+
+    def _build(self, sandbox, name="b11838"):
+        binary = (sandbox / "data" / "runtime" / "llama" / name
+                  / "llama-server.exe")
+        binary.parent.mkdir(parents=True, exist_ok=True)
+        binary.write_bytes(b"")
+        return binary
+
+    def test_a_text_file_pointer(self, sandbox):
+        """The reliable way on Windows without the privilege."""
+        self._build(sandbox)
+        pointer = installer.pointer_path()
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        pointer.write_text("b11838", encoding="utf-8")
+
+        assert installer.read_pointer() == "b11838"
+        assert installer.list_builds() == ["b11838"]
+
+    def test_a_symlink_pointer(self, sandbox):
+        """Where symlinks work, the pointer is a symlink."""
+        self._build(sandbox)
+        pointer = installer.pointer_path()
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            os.symlink("b11838", pointer, target_is_directory=True)
+        except (OSError, NotImplementedError, AttributeError):
+            pytest.skip("this system does not allow symlinks")
+
+        assert installer.read_pointer() == "b11838"
+        assert installer.list_builds() == ["b11838"]
+
+    def test_a_junction_pointer(self, sandbox):
+        """A junction looks like a directory.
+
+        The reader has to see through it, and the list of the builds
+        has to leave it out.
+        """
+        self._build(sandbox)
+        pointer = installer.pointer_path()
+        pointer.parent.mkdir(parents=True, exist_ok=True)
+        if pointer.exists():
+            pointer.unlink()
+
+        # The target has to be absolute - mklink would take a
+        # relative path from the working directory of the command.
+        target = pointer.parent / "b11838"
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(pointer), str(target)],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30)
+        if result.returncode != 0 or not pointer.is_dir():
+            pytest.skip("this system does not allow junctions")
+
+        assert installer.read_pointer() == "b11838"
+        assert installer.list_builds() == ["b11838"]
+
+    def test_the_pointer_is_never_a_build(self, sandbox):
+        """Whatever shape it has, the pointer is not in the list."""
+        self._build(sandbox)
+        installer._write_pointer("b11838")
+
+        assert "current" not in installer.list_builds()

@@ -99,13 +99,37 @@ class Installation:
 
 
 def read_pointer() -> str | None:
-    """The build the pointer names, if there is one."""
+    """The build the pointer names, if there is one.
+
+    **The pointer has three shapes, and all three have to work.**
+
+    - A symlink to the build. The target is the name.
+    - A text file with the name in it. The reliable way on Windows
+      without the symlink privilege.
+    - A directory junction. It looks like a directory, and the
+      directory it points at is the build.
+
+    The junction is the reason this function has three branches: a
+    junction is not a symlink and not a file, so the first two
+    branches miss it and the pointer reads as "nothing is installed" -
+    on a machine where the junction worked, while the same code was
+    right on a machine where it did not.
+    """
     pointer = pointer_path()
     if pointer.is_symlink():
         target = os.readlink(pointer)
         return Path(target).name
     if pointer.is_file():
         return pointer.read_text(encoding="utf-8").strip() or None
+    if pointer.is_dir():
+        # A junction: the directory behind it is the build.
+        try:
+            resolved = pointer.resolve()
+        except OSError:
+            return None
+        name = resolved.name
+        if name and name != pointer.name:
+            return name
     return None
 
 
@@ -331,8 +355,16 @@ def rollback() -> Installation | None:
 
 
 def list_builds() -> list[str]:
-    """The builds that are on disk."""
+    """The builds that are on disk.
+
+    **The pointer is not a build.** As a symlink or as a junction it
+    is a directory as far as the file system is concerned, so it
+    would show up in the list. The list of the builds has to be the
+    same on every machine.
+    """
     root = runtime_dir()
     if not root.is_dir():
         return []
-    return sorted(p.name for p in root.iterdir() if p.is_dir())
+    pointer = pointer_path().name
+    return sorted(p.name for p in root.iterdir()
+                  if p.is_dir() and p.name != pointer)
