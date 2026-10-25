@@ -19,8 +19,8 @@ Nothing here touches the GPU or the filesystem.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Iterable, Sequence
 
 # ---------------------------------------------------------------------------
 # Measured constants
@@ -214,10 +214,24 @@ class Candidate:
             # renegotiate it at runtime.
             "--fit", "off",
             "--flash-attn", "on",
-            # mem0 parses the model's JSON output itself; thought tags
-            # would only get in the way. The flag is --reasoning-format
-            # with a value - there is no "--reasoning off".
-            "--reasoning-format", "none",
+            # mem0 asks for a JSON object, and llama.cpp turns that into
+            # a grammar. The grammar accepts the assistant prefix and
+            # then whitespace - but not an open "<think>" block.
+            #
+            # The chat template puts "<think>" into the prompt when
+            # the thinking mode is on. The grammar then breaks:
+            #
+            #     Unexpected empty grammar stack after accepting
+            #     piece: <think>
+            #
+            # "--reasoning off" sets enable_thinking to false
+            # (common/arg.cpp), so the template closes the block right
+            # away and the prompt stays valid JSON whitespace.
+            #
+            # "--reasoning-format none" is not enough: it controls how
+            # the answer is parsed, not whether the thinking mode is
+            # on.
+            "--reasoning", "off",
             "--no-context-shift",
             # The KV cache is a shared pool. This is what makes two slots
             # affordable: without it, every slot needs its own pool of

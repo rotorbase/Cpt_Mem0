@@ -56,7 +56,7 @@ def _format_plan(result: PlanResult, hardware: Hardware) -> str:
         # does not exist in the target build would make the server abort
         # during argument parsing, before it loads anything.
         lines.append("        --fit off  --flash-attn on  "
-                     "--reasoning-format none  --kv-unified")
+                     "--reasoning off  --kv-unified")
         if c.recurrent_state_mib > 0:
             lines.append(f"        recurrent state     {c.recurrent_state_mib:.0f} MiB "
                          f"(hybrid model, fixed)")

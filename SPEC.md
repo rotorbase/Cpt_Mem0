@@ -264,6 +264,48 @@ The launch configuration always contains `--fit off`. With `--fit` enabled,
 after the planner computed a valid configuration. The planner's result must
 be the final word.
 
+### 4.6a The reasoning mode has to be off
+
+**Measured on the hardware run of 25.10.2026.** mem0 asks the LLM for
+a JSON object, and llama.cpp turns that into a grammar. The grammar
+that llama.cpp builds looks like this - taken from the server log:
+
+```
+root ::= "<|im_start|>assistant\n" space response-format
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+response-format ::= object
+```
+
+The grammar accepts the assistant prefix and then whitespace. The
+Qwen3.5 chat template puts an **open** `<think>` into the prompt when
+the thinking mode is on, and the grammar breaks:
+
+```
+E common_sampler_init: error initializing grammar sampler
+E srv send_error: Failed to initialize samplers: Unexpected empty
+  grammar stack after accepting piece: <think> (248068)
+```
+
+The failure is in the **prompt**, not in the answer. The whole
+extraction fails, and mem0 reports it as `LLMError`.
+
+**The fix is `--reasoning off`.** It sets `enable_thinking` to false
+(`common/arg.cpp`), so the template closes the block right away and
+what reaches the grammar is whitespace, which the `space` rule
+accepts.
+
+`--reasoning-format none` is **not** enough. It controls how the
+answer is parsed, not whether the thinking mode is on. An earlier
+version of this project used it and the extraction failed.
+
+| Flag | What it does | Needed? |
+|---|---|---|
+| `--reasoning off` | switches the thinking mode off in the chat template | **yes** |
+| `--reasoning-format none` | leaves the thought tags in `message.content` | no |
+| `--chat-template-kwargs '{"enable_thinking": false}'` | the same as `--reasoning off`, but deprecated | no |
+
+---
+
 ### 4.7 Context floor — the service must be able to extract facts
 
 A configuration is only valid if the model can actually do mem0's job.
@@ -995,7 +1037,7 @@ GPU     RTX 3060                          12288 MiB total
 LLM     Qwen3.5-9B Q8_0                   9086 MiB
         weights 8087 MiB  KV 1114 MiB (17408 B/tok, q8_0)
         n_ctx 62976  (62976 per slot, 2 slots)
-        --fit off  --flash-attn on  --reasoning-format none  --kv-unified
+        --fit off  --flash-attn on  --reasoning off  --kv-unified
         recurrent state     100 MiB (hybrid model, fixed)
         ranking basis: unmeasured
 EMBED   llamacpp                          on GPU

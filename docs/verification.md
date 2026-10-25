@@ -781,5 +781,55 @@ The catalogue ranks by measured extraction capability, not parameter count.
 Chat quality is a tiebreaker only — the service's primary function is
 storage. A user who wants a stronger chat model pins one explicitly.
 
+## The daemon against real llama.cpp — 25.10.2026
 
+The first hardware run of the daemon. The servers came up correctly
+and the failure was in the extraction.
+
+**Measured on the card:**
+
+| | |
+|---|---|
+| `n_ctx_slot` | 61696 |
+| layers on the GPU | 33 / 33 |
+| weights (CUDA0) | 8045.05 MiB |
+| KV buffer | 1024.25 MiB |
+| recurrent state | 100.50 MiB |
+
+**The failure:**
+
+```
+LLMError: LLM extraction failed: Error code: 400 - {'error': {'code': 400,
+'message': 'Failed to initialize samplers: Unexpected empty grammar stack
+after accepting piece: <think> (248068)',
+'type': 'invalid_request_error'}}
+```
+
+**The cause, from the server log:**
+
+```
+D common_sampler_init: prefill token: 248068 = <think>
+E common_sampler_init: error initializing grammar sampler for grammar:
+    root ::= "<|im_start|>assistant\n" space response-format
+    space ::= | " " | "\n"{1,2} [ \t]{0,20}
+```
+
+mem0 asks for `response_format: {"type": "json_object"}`. llama.cpp
+builds a JSON grammar from it. The chat template puts an open
+`<think>` into the prompt because the thinking mode is on, and the
+grammar breaks. The failure is in the prompt, not in the answer.
+
+**The fix:** `--reasoning off`. It sets `enable_thinking` to false
+(`common/arg.cpp`), so the template closes the block and the prompt
+stays valid whitespace for the grammar.
+
+`--reasoning-format none` is not enough - it controls the parsing of
+the answer, not the thinking mode. The project used it and the
+extraction failed.
+
+**Also measured:** the per-process reading from `nvidia-smi` returns
+N/A for every process on this machine. The card is managed by the
+display driver (WDDM), not by the NVIDIA driver. The GPU proof
+therefore comes from the server log, which reports the device, the
+number of layers on the GPU and the size of every buffer.
 
