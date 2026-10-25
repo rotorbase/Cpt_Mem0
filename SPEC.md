@@ -1095,17 +1095,27 @@ mem0 2.2.1, qdrant-client 1.19/1.20, Windows 11.
 
 ## 15. Implementation phases
 
-| Phase | Scope | Estimate |
-|---|---|---|
-| 1 | Planner + GGUF reader + calibration (pure logic, testable) | 1 day |
-| 2 | Binary provisioning + update + platform detection | 1 day |
-| 3 | Daemon: process supervision, mem0 engine, Qdrant store | 1.5 days |
-| 4 | REST + MCP API, key management | 1 day |
-| 5 | CLI, init flow, status | 1 day |
-| 6 | Cross-platform hardening (Windows/Linux/macOS), docs | 1.5 days |
+| Phase | Scope | Estimate | State |
+|---|---|---|---|
+| 1 | Planner + GGUF reader + calibration (pure logic, testable) | 1 day | **done** |
+| 2 | Binary provisioning + update + platform detection | 1 day | **done** |
+| 3 | Daemon: process supervision, mem0 engine, Qdrant store | 1.5 days | next |
+| 4 | REST + MCP API, key management | 1 day | open |
+| 5 | CLI, init flow, status | 1 day | partly done (§7) |
+| 6 | Cross-platform hardening (Windows/Linux/macOS), docs | 1.5 days | open |
 
 Phase 1 has no dependencies on the rest and can be validated independently
 against the data in §13.
+
+**Phase 2 is verified on this machine:** build 11838 is installed with the
+CUDA runtime, and `--list-devices` reports
+`CUDA0: NVIDIA GeForce RTX 3060 (12287 MiB)`. See §7.2 and
+`docs/runtime.md`.
+
+**Phase 3 is next.** It needs the daemon to supervise the two
+`llama-server` processes and to own the mem0 engine on top of the
+Qdrant store. The extraction measurement runs against it - the old 9B
+numbers are void because `--fit` changed the context under them.
 
 ---
 
