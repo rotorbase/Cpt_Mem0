@@ -430,6 +430,143 @@ class TestMemoryService:
 
 
 # ----------------------------------------------------------------------
+# the GPU measurement
+# ----------------------------------------------------------------------
+
+class _FakeProcess:
+    """A process that looks alive."""
+
+    pid = 1234
+
+    def poll(self):
+        return None
+
+
+class TestGpuBuffers:
+    """The GPU measurement comes from the server log.
+
+    The per-process reading from nvidia-smi is N/A on Windows with the
+    WDDM driver - the card is managed by the display driver there.
+    The log has the truth on every system.
+    """
+
+    LOG = """\
+0.00.236.709 I load_tensors: offloaded 13/13 layers to GPU
+0.00.236.711 I load_tensors:   CPU_Mapped model buffer size =    12.58 MiB
+0.00.236.712 I load_tensors:        CUDA0 model buffer size =    66.92 MiB
+0.00.268.880 I sched_reserve:      CUDA0 compute buffer size =    24.51 MiB
+0.00.215.757 I llama_prepare_model_devices: using device CUDA0 (NVIDIA GeForce RTX 3060) - 11255 MiB free
+"""
+
+    def test_it_reads_the_model_buffer(self, tmp_path):
+        from cpt_mem0.supervisor import gpu_buffers
+
+        log = tmp_path / "server.log"
+        log.write_text(self.LOG, encoding="utf-8")
+        assert gpu_buffers(log)["model_mib"] == 66.92
+
+    def test_the_cpu_mapped_line_is_not_the_model_buffer(self, tmp_path):
+        """The host line comes first and is not VRAM."""
+        from cpt_mem0.supervisor import gpu_buffers
+
+        log = tmp_path / "server.log"
+        log.write_text(self.LOG, encoding="utf-8")
+        buffers = gpu_buffers(log)
+        assert buffers["model_mib"] != 12.58
+        assert buffers["cpu_mapped_mib"] == 12.58
+
+    def test_it_reads_the_offloaded_layers(self, tmp_path):
+        from cpt_mem0.supervisor import gpu_buffers
+
+        log = tmp_path / "server.log"
+        log.write_text(self.LOG, encoding="utf-8")
+        buffers = gpu_buffers(log)
+        assert buffers["offloaded_layers"] == 13
+        assert buffers["total_layers"] == 13
+
+    def test_it_reads_the_device(self, tmp_path):
+        from cpt_mem0.supervisor import gpu_buffers
+
+        log = tmp_path / "server.log"
+        log.write_text(self.LOG, encoding="utf-8")
+        assert gpu_buffers(log)["device"] == "CUDA0"
+
+    def test_a_missing_log_gives_no_values(self, tmp_path):
+        from cpt_mem0.supervisor import gpu_buffers
+
+        buffers = gpu_buffers(tmp_path / "nothing.log")
+        assert buffers["model_mib"] is None
+        assert buffers["offloaded_layers"] is None
+
+    def test_the_command_always_has_the_verbose_flag(self, tmp_path):
+        """Without it the server does not print the buffer lines."""
+        spec = ServerSpec(name="llm", binary=Path("/x/llama-server"),
+                           model=Path("/x/m.gguf"), port=8799)
+        assert "--verbose" in spec.command()
+
+    def test_the_verbose_flag_is_not_doubled(self, tmp_path):
+        spec = ServerSpec(name="llm", binary=Path("/x/llama-server"),
+                           model=Path("/x/m.gguf"), port=8799,
+                           flags=["--verbose"])
+        assert spec.command().count("--verbose") == 1
+
+
+class TestGpuPlacementWarning:
+    def test_a_server_on_the_cpu_is_reported(self, tmp_path):
+        """The silent CPU fallback: the port is open and the model
+        answers, but it computes on the CPU."""
+        from cpt_mem0.supervisor import check_gpu_placement
+
+        log = tmp_path / "server.log"
+        log.write_text(
+            "I load_tensors: offloaded 0/33 layers to GPU\n"
+            "I load_tensors:        CUDA0 model buffer size =     0.00 MiB\n",
+            encoding="utf-8")
+        spec = ServerSpec(name="llm", binary=Path("/x/a"),
+                           model=Path("/x/m"), port=8766, log_path=log)
+        supervisor = Supervisor([spec])
+        supervisor.states["llm"].process = _FakeProcess()
+
+        warnings = check_gpu_placement(supervisor)
+        assert warnings
+        # Both findings are correct: no layer went to the GPU, and the
+        # model buffer is empty.
+        assert any("not on the GPU" in warning for warning in warnings)
+        assert any("layers on the GPU" in warning for warning in warnings)
+
+    def test_a_server_partly_on_the_cpu_is_reported(self, tmp_path):
+        from cpt_mem0.supervisor import check_gpu_placement
+
+        log = tmp_path / "server.log"
+        log.write_text(
+            "I load_tensors: offloaded 10/33 layers to GPU\n"
+            "I load_tensors:        CUDA0 model buffer size =  2000.00 MiB\n",
+            encoding="utf-8")
+        spec = ServerSpec(name="llm", binary=Path("/x/a"),
+                           model=Path("/x/m"), port=8766, log_path=log)
+        supervisor = Supervisor([spec])
+        supervisor.states["llm"].process = _FakeProcess()
+
+        warnings = check_gpu_placement(supervisor)
+        assert any("layers on the GPU" in warning for warning in warnings)
+
+    def test_a_server_on_the_gpu_is_not_reported(self, tmp_path):
+        from cpt_mem0.supervisor import check_gpu_placement
+
+        log = tmp_path / "server.log"
+        log.write_text(
+            "I load_tensors: offloaded 33/33 layers to GPU\n"
+            "I load_tensors:        CUDA0 model buffer size =  8045.05 MiB\n",
+            encoding="utf-8")
+        spec = ServerSpec(name="llm", binary=Path("/x/a"),
+                           model=Path("/x/m"), port=8766, log_path=log)
+        supervisor = Supervisor([spec])
+        supervisor.states["llm"].process = _FakeProcess()
+
+        assert check_gpu_placement(supervisor) == []
+
+
+# ----------------------------------------------------------------------
 # the API
 # ----------------------------------------------------------------------
 

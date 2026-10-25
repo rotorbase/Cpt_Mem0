@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -48,9 +49,18 @@ class ServerSpec:
     log_path: Path | None = None
 
     def command(self) -> list[str]:
-        """The command line."""
+        """The command line.
+
+        The verbose flag is always on. Without it the server does not
+        print the buffer lines, and those lines are the only way to
+        tell that the model is on the GPU - the per-process reading
+        from nvidia-smi is N/A on Windows with the WDDM driver.
+        """
+        flags = list(self.flags)
+        if VERBOSE_FLAG not in flags:
+            flags.append(VERBOSE_FLAG)
         command = [str(self.binary), "-m", str(self.model),
-                   "--port", str(self.port), *self.flags]
+                   "--port", str(self.port), *flags]
         return command
 
 
@@ -367,6 +377,84 @@ def process_vram_mib(pid: int) -> int | None:
     return None
 
 
+#: The buffer lines the server prints. The device is part of the
+#: pattern: the host line comes first and is not VRAM.
+MODEL_BUFFER_RE = re.compile(
+    r"CUDA0\s+model buffer size\s*=\s*([0-9.]+)\s*MiB")
+CPU_MAPPED_RE = re.compile(
+    r"CPU_Mapped\s+model buffer size\s*=\s*([0-9.]+)\s*MiB")
+KV_BUFFER_RE = re.compile(
+    r"CUDA0\s+KV buffer size\s*=\s*([0-9.]+)\s*MiB")
+RS_BUFFER_RE = re.compile(
+    r"CUDA0\s+RS buffer size\s*=\s*([0-9.]+)\s*MiB")
+COMPUTE_BUFFER_RE = re.compile(
+    r"CUDA0\s+compute buffer size\s*=\s*([0-9.]+)\s*MiB")
+OFFLOAD_RE = re.compile(
+    r"offloaded\s+(\d+)\s*/\s*(\d+)\s+layers to GPU")
+DEVICE_RE = re.compile(r"using device\s+(\S+)")
+
+#: The flags that make the server print the buffer lines. Without
+#: --verbose they are not in the log at all.
+VERBOSE_FLAG = "--verbose"
+
+
+def gpu_buffers(log_path: Path | None) -> dict[str, float | None]:
+    """What the server log says about the VRAM it uses.
+
+    **This is the measurement that works everywhere.** The per-process
+    reading from `nvidia-smi` does not: on Windows with the WDDM
+    driver it returns N/A for every process, because the card is
+    managed by the display driver and not by the NVIDIA driver.
+
+    The server log has the truth either way. It says which device it
+    uses, how many layers went to the GPU, and how big each buffer
+    is.
+    """
+    result: dict[str, float | None] = {
+        "model_mib": None,
+        "cpu_mapped_mib": None,
+        "kv_mib": None,
+        "rs_mib": None,
+        "compute_mib": None,
+        "offloaded_layers": None,
+        "total_layers": None,
+        "device": None,
+    }
+    if log_path is None or not log_path.is_file():
+        return result
+
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return result
+
+    for line in text.splitlines():
+        match = MODEL_BUFFER_RE.search(line)
+        if match:
+            result["model_mib"] = float(match.group(1))
+        match = CPU_MAPPED_RE.search(line)
+        if match:
+            result["cpu_mapped_mib"] = float(match.group(1))
+        match = KV_BUFFER_RE.search(line)
+        if match:
+            result["kv_mib"] = float(match.group(1))
+        match = RS_BUFFER_RE.search(line)
+        if match:
+            result["rs_mib"] = float(match.group(1))
+        match = COMPUTE_BUFFER_RE.search(line)
+        if match:
+            result["compute_mib"] = float(match.group(1))
+        match = OFFLOAD_RE.search(line)
+        if match:
+            result["offloaded_layers"] = int(match.group(1))
+            result["total_layers"] = int(match.group(2))
+        match = DEVICE_RE.search(line)
+        if match:
+            result["device"] = match.group(1)
+
+    return result
+
+
 def check_gpu_placement(supervisor: Supervisor,
                          threshold_mib: int = 1000) -> list[str]:
     """Warnings about servers that are not on the GPU.
@@ -375,20 +463,39 @@ def check_gpu_placement(supervisor: Supervisor,
     computing on the CPU. That failure is silent from the outside: the
     port is open, the model answers, and the speed is a sixth of what
     it should be.
+
+    The measurement comes from the server log, not from nvidia-smi:
+    the per-process reading is N/A on Windows with the WDDM driver.
     """
     warnings: list[str] = []
     for entry in supervisor.status():
-        if not entry["running"] or entry["pid"] is None:
+        if not entry["running"]:
             continue
-        used = process_vram_mib(entry["pid"])
-        if used is None:
-            continue
-        if used < threshold_mib:
+        spec = supervisor.states[entry["name"]].spec
+        buffers = gpu_buffers(spec.log_path)
+
+        if buffers["offloaded_layers"] is not None and \
+                buffers["total_layers"] is not None:
+            offloaded = buffers["offloaded_layers"]
+            total = buffers["total_layers"]
+            if offloaded < total:
+                warnings.append(
+                    f"the {entry['name']} server put only {offloaded} of "
+                    f"{total} layers on the GPU - it is running partly on "
+                    f"the CPU")
+
+        model_mib = buffers["model_mib"]
+        if model_mib is not None and model_mib < threshold_mib:
             warnings.append(
-                f"the {entry['name']} server holds only {used} MiB of "
-                f"VRAM - it is probably not on the GPU. The CUDA runtime "
-                f"libraries are most likely missing from the runtime "
-                f"directory.")
+                f"the {entry['name']} server holds only {model_mib:.0f} MiB "
+                f"of GPU memory - it is probably not on the GPU. The CUDA "
+                f"runtime libraries are most likely missing from the "
+                f"runtime directory.")
+        elif model_mib is not None:
+            # The per-process reading is not available everywhere, so
+            # the log is the source.
+            continue
+
     return warnings
 
 
