@@ -15,6 +15,8 @@ const state = {
   modelsLoaded: false,
   onGpu: false,
   appVram: 0,
+  loading: false,
+  waiting: "",
   suspended: false,
   activeTopic: null,
   clusters: [],
@@ -130,11 +132,16 @@ function renderPower() {
   // user notices at once - in the task manager the model is not
   // there. The state comes from the servers.
   const on = state.modelsLoaded;
+  const loading = state.loading;
   button.classList.toggle("on", on);
-  button.querySelector(".power-label").textContent = on ? "AN" : "AUS";
+  button.classList.toggle("loading", loading);
+  button.querySelector(".power-label").textContent =
+    on ? "AN" : loading ? "LÄDT" : "AUS";
   button.title = on
     ? "Die Modelle laufen. Klick: sie beenden und die VRAM freigeben."
-    : "Die Modelle sind aus. Klick: sie laden.";
+    : loading
+      ? "Die Modelle werden geladen. Das dauert etwa eine Minute."
+      : "Die Modelle sind aus. Klick: sie laden.";
 }
 
 async function togglePower() {
@@ -166,6 +173,31 @@ async function togglePower() {
 }
 
 /* ------------------------------------------------------------------ */
+/* was beim Laden passiert                                               */
+/* ------------------------------------------------------------------ */
+
+let lastWaiting = "";
+
+function renderLoading() {
+  const text = state.loading
+    ? (state.waiting
+        ? `Warte auf VRAM: ${state.waiting}`
+        : "Die Modelle werden geladen. Das dauert etwa eine Minute.")
+    : "";
+  if (text === lastWaiting) return;
+  lastWaiting = text;
+  if (text) {
+    status(text, "wait");
+  } else if (state.modelsLoaded) {
+    const mib = state.appVram ? ` - ${state.appVram} MiB auf der Karte` : "";
+    status(state.onGpu
+      ? `Die Modelle sind geladen${mib}.`
+      : "Die Modelle laufen, aber nicht auf der Grafikkarte.",
+      state.onGpu ? "ok" : "error");
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* die Anzeige aktualisieren                                             */
 /* ------------------------------------------------------------------ */
 
@@ -176,6 +208,8 @@ async function refresh() {
     state.modelsLoaded = runtime.models_loaded === true;
     state.onGpu = runtime.on_gpu === true;
     state.appVram = runtime.app_vram_mib || 0;
+    state.loading = runtime.loading === true;
+    state.waiting = runtime.waiting || "";
     renderPower();
 
     const used = runtime.gpu_used_mib;
@@ -200,8 +234,9 @@ async function refresh() {
     if (models) {
       models.textContent = state.modelsLoaded
         ? (state.onGpu ? "auf der GPU" : "auf der CPU")
-        : "aus";
+        : state.loading ? "lädt" : "aus";
     }
+    renderLoading();
   } catch (error) {
     status(error.message, "error");
   }

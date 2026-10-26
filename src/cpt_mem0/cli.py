@@ -571,7 +571,12 @@ def cmd_ui(args) -> int:
     config = Config()
     daemon = Daemon(config, DaemonPaths.default())
 
-    start_daemon_in_thread(daemon, suspend=args.suspend)
+    # **The models do not come up with the app.** The switch in the
+    # window is the only thing that starts them. A program that
+    # loads a model into the card on its own takes the VRAM away
+    # from whatever else wants it - a game, another model - and the
+    # user cannot see that it happened.
+    start_daemon_in_thread(daemon, suspend=True)
 
     address = wait_for_address(daemon)
     if not address:

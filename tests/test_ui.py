@@ -11,6 +11,7 @@ the settings, the files that are served.
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -314,6 +315,46 @@ class TestABrokenClient:
         assert "ConnectionAbortedError" not in printed.err
 
 
+class TestTheAppTakesNoVram:
+    """The app must not take the VRAM on its own.
+
+    **The rule.** The models are loaded when the user presses the
+    switch - not when the app starts. A program that loads a 9B
+    model into the card while a game is running makes the game
+    stutter, and the user has no way to see that the app did it.
+
+    The test watches the supervisor: nothing may be started.
+    """
+
+    def test_the_start_loads_no_model(self, daemon, monkeypatch):
+        started = []
+
+        from cpt_mem0 import supervisor as supervisor_module
+
+        monkeypatch.setattr(supervisor_module.Supervisor, "start",
+                            lambda self, name, timeout=180.0:
+                            started.append(name))
+
+        daemon.start(suspend=True)
+
+        assert started == [], "the app started a model on its own"
+        assert daemon.suspended is True
+
+    def test_the_daemon_starts_suspended_by_default(self, daemon,
+                                                      monkeypatch):
+        """Without an explicit wish the models stay down."""
+        from cpt_mem0 import supervisor as supervisor_module
+
+        started = []
+        monkeypatch.setattr(supervisor_module.Supervisor, "start",
+                            lambda self, name, timeout=180.0:
+                            started.append(name))
+
+        daemon.start()
+        assert started == []
+        assert daemon.suspended is True
+
+
 class TestSuspend:
     """The on/off switch: the models stop, the memory stays."""
 
@@ -321,12 +362,51 @@ class TestSuspend:
         daemon.suspend()
         assert daemon.suspended is True
 
-    def test_resume_clears_the_flag(self, daemon):
-        """With a runtime the models come back."""
+    def test_resume_clears_the_flag(self, daemon, monkeypatch):
+        """With a runtime the models come back.
+
+        **The load runs in the background.** A switch that waits a
+        minute for the answer looks broken, so the answer comes at
+        once and the work happens in a thread. The test waits for
+        that thread like the window does.
+
+        **Nothing is started.** The plan is a stub and the server
+        list is empty - a test that loads a real model would take the
+        VRAM away from the machine the test runs on.
+        """
+        from cpt_mem0 import autoconfig
+
+        class Plan:
+            ok = True
+            reason = ""
+            model_id = "test"
+            quantisation = "Q8_0"
+            n_ctx = 4096
+            embedder_backend = "llamacpp"
+            model_file = None
+            embedder_file = None
+            flags = []
+            embedder_flags = []
+            vram_mib = 0.0
+            free_mib = None
+            used_by_others_mib = 0
+            candidates = []
+
+            def to_dict(self):
+                return {}
+
+        monkeypatch.setattr(autoconfig, "configure",
+                            lambda *args, **kwargs: Plan())
+        monkeypatch.setattr(daemon, "_server_specs", list)
+
         daemon._runtime_error = ""
         daemon.supervisor.states = {}
         daemon.suspend()
         daemon.resume()
+
+        deadline = time.time() + 10
+        while daemon._loading and time.time() < deadline:
+            time.sleep(0.05)
         assert daemon.suspended is False
 
     def test_resume_without_a_runtime_says_what_is_missing(self, daemon):

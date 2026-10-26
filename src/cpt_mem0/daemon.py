@@ -215,6 +215,21 @@ class Daemon:
         # when they are switched on.
         self.supervisor = Supervisor([], on_event=self._log_event)
         self._runtime_error = ""
+        #: The plan the app made for itself.
+        self._auto: Any = None
+        #: True while the models are being loaded.
+        self._loading = False
+        #: Why the models cannot be loaded (yet).
+        self._waiting = ""
+        #: What went wrong with the last load.
+        self._load_error = ""
+
+        # **The models are found before the servers are built.**
+        # Without a model file there is no server at all, and the
+        # switch in the window would do nothing - with no message
+        # about why.
+        self._autoconfigure()
+
         try:
             self.supervisor = Supervisor(self._server_specs(),
                                          on_event=self._log_event)
@@ -281,6 +296,43 @@ class Daemon:
 
         return specs
 
+    def _autoconfigure(self) -> None:
+        """Find the models and plan the configuration.
+
+        **The app has to work without a console.** Nobody is going to
+        type a path into a command line: the app finds the models that
+        are on the machine, asks the planner which of them fits on the
+        card right now, and takes the flags from the plan.
+
+        The plan is written to the configuration, so the next start
+        does not have to do it again - and so the user can see and
+        change it.
+        """
+        from .autoconfig import apply as apply_plan
+        from .autoconfig import configure
+
+        try:
+            plan = configure(self.config)
+        except Exception as error:
+            self._load_error = str(error)
+            return
+
+        self._auto = plan
+        if plan.ok:
+            apply_plan(self.config, plan)
+            self._save_config()
+        else:
+            self._waiting = plan.reason
+
+    def _save_config(self) -> None:
+        """Write the configuration."""
+        from .config import default_config_path, save_config
+
+        try:
+            save_config(self.config, default_config_path())
+        except OSError:
+            pass
+
     def _log_event(self, name: str, message: str) -> None:
         """Record an event."""
         event = {"time": time.time(), "server": name, "message": message}
@@ -293,17 +345,23 @@ class Daemon:
     # ------------------------------------------------------------------
 
     def start(self, timeout: float = 180.0,
-              suspend: bool = False) -> None:
+              suspend: bool = True) -> None:
         """Start the servers, open the store and serve the API.
 
         The order matters: the servers come up first, because the
         engine needs their endpoints. The store comes last, because
         its lock is the one resource that cannot be taken back.
 
-        With ``suspend`` the servers stay down. The store opens
-        anyway - it does not need a model - and the API comes up. So
-        the window is there, the memory is there, and the VRAM stays
-        free until the user presses the switch.
+        **The models stay down unless somebody asks for them.** The
+        default is ``suspend=True``, and that is not a detail: the
+        app must never take the VRAM on its own. A program that
+        loads a 9B model into the card while a game is running
+        makes the game stutter, and the user has no way to see that
+        the app did it.
+
+        The store opens anyway - it does not need a model - and the
+        API comes up. So the window is there, the memory is there,
+        and the VRAM stays free until the user presses the switch.
         """
         self.paths.logs.mkdir(parents=True, exist_ok=True)
         self.paths.state.mkdir(parents=True, exist_ok=True)
@@ -458,6 +516,17 @@ class Daemon:
         **Without the runtime this is an error with a clear
         message**, not a crash: "run cpt-mem0 init first". The window
         shows it.
+
+        **In the background.** The load of a 9B takes a minute, and a
+        switch that stands there for a minute without an answer looks
+        broken. The answer comes at once, the switch says "loading",
+        and the status says what is happening.
+
+        **The app waits for the VRAM.** When another program has the
+        card - a game, another model - the model does not fit. The app
+        neither fails nor pretends: it waits, and says how much memory
+        it is waiting for. When the game is over, the model comes up
+        on its own.
         """
         if not self.suspended:
             return {"suspended": False, "already": True}
@@ -465,11 +534,54 @@ class Daemon:
         if self._runtime_error:
             raise ApiError(self._runtime_error, status=503)
 
-        for spec in self.supervisor.states:
-            self.supervisor.start(spec, timeout=timeout)
-        self.suspended = False
-        self._log_event("runtime", "the models were resumed")
-        return {"suspended": False}
+        if self._loading:
+            return {"suspended": False, "loading": True}
+
+        self._loading = True
+        self._waiting = ""
+        self._load_error = ""
+        thread = threading.Thread(target=self._resume_worker, daemon=True)
+        thread.start()
+        return {"suspended": False, "loading": True}
+
+    def _resume_worker(self) -> None:
+        """Load the models, and wait for the VRAM if it is not there."""
+        from .autoconfig import apply as apply_plan
+        from .autoconfig import configure
+
+        while True:
+            try:
+                plan = configure(self.config)
+            except Exception as error:
+                self._loading = False
+                self._load_error = str(error)
+                return
+
+            self._auto = plan
+
+            if plan.ok:
+                apply_plan(self.config, plan)
+                self._save_config()
+                try:
+                    self.supervisor = Supervisor(self._server_specs(),
+                                                 on_event=self._log_event)
+                    for spec in self.supervisor.states:
+                        self.supervisor.start(spec)
+                except ServerError as error:
+                    self._loading = False
+                    self._load_error = str(error)
+                    self._log_event("runtime", str(error))
+                    return
+                self.suspended = False
+                self._loading = False
+                self._waiting = ""
+                self._log_event("runtime", "the models are loaded")
+                return
+
+            # **Not enough VRAM.** Wait for it, and say so.
+            self._waiting = plan.reason
+            self._log_event("runtime", plan.reason)
+            time.sleep(5)
 
     def _watch(self) -> None:
         """Restart a server that died."""
@@ -793,6 +905,12 @@ class Daemon:
             "gpu_used_mib": gpu_used_mib(),
             "gpu_free_mib": gpu_free_mib(),
             "servers": servers,
+            # **What the switch is doing.** The load takes a minute,
+            # and the wait for the VRAM can take longer.
+            "loading": self._loading,
+            "waiting": self._waiting,
+            "load_error": self._load_error,
+            "auto": self._auto.to_dict() if self._auto is not None else {},
         }
 
     def status(self) -> dict[str, Any]:

@@ -41,6 +41,22 @@ whoever wants it - the big switch in the window turns the models on.
 The store is reachable whether the models run or not, so the app is
 usable while the GPU is busy with a game.
 
+**The app never takes the VRAM on its own.** That is not a setting
+but a rule, and there is a test for it: the app must not start a
+model when it comes up. A program that loads a 9B model into the
+card while a game is running makes the game stutter, and the user
+has no way to see that the app did it.
+
+**The app finds its models itself.** Nobody types a path into a
+command line. The app looks for the GGUF files on the machine, asks
+the planner which of them fits on the card **right now**, and takes
+the flags from the plan. The plan is made for the memory that is
+free - the card has 12 GB, but a game has a part of it.
+
+**The app waits for the VRAM.** When the models do not fit because
+something else has the card, the app says so and waits. When the
+game is over, the model comes up on its own.
+
 ## The build
 
 Two steps, and the second one needs the first:

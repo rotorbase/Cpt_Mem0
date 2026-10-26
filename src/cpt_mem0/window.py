@@ -463,7 +463,7 @@ def wait_for_address(daemon: Any, timeout: float = 60.0) -> str:
     return getattr(daemon, "address", "")
 
 
-def start_daemon_in_thread(daemon: Any, suspend: bool = False) -> threading.Thread:
+def start_daemon_in_thread(daemon: Any, suspend: bool = True) -> threading.Thread:
     """Start the daemon in a background thread.
 
     **The exception of the thread goes into the log.** A daemon that
