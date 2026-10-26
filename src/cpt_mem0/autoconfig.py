@@ -66,13 +66,21 @@ class AutoConfig:
 #: read with another is a store that cannot be searched.
 EMBEDDER_FLAGS = [
     "--parallel", "1",
-    "-c", "2048",
+    "-c", "4096",
     # **The embedder runs on the processor.** It is small, it only
     # works when a memory is written or searched, and the card is
     # better used for the model that answers and for the speech
     # recognition. This way the card gets about 400 MiB back.
     "-ngl", "0",
     "--threads", "8",
+    # **The batch has to be as big as the text.** mem0 embeds the
+    # whole conversation, and a long answer plus a long dictation
+    # is more than 512 tokens. llama.cpp refuses anything that does
+    # not fit into one physical batch - with the message "input
+    # (586 tokens) is too large to process". The processor does not
+    # care: the bigger batch costs memory, not VRAM.
+    "-b", "4096",
+    "-ub", "4096",
     "--embeddings",
     "--pooling", "mean",
     "--kv-unified",

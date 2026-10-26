@@ -168,14 +168,27 @@ class MemoryService:
             {"role": "user", "content": text},
             {"role": "assistant", "content": answer},
         ]
-        stored = self.engine.remember_conversation(
-            conversation, user_id, prompt=EXTRACTION_PROMPT)
+        # **The answer stands even when the memory does not.** The
+        # user asked a question and got an answer - that is the
+        # product. A store that stumbles must not take the answer
+        # with it; it says what happened and the answer stays.
+        stored: dict[str, Any] = {}
+        store_error = ""
+        try:
+            stored = self.engine.remember_conversation(
+                conversation, user_id, prompt=EXTRACTION_PROMPT)
+        except Exception as error:  # noqa: BLE001
+            store_error = str(error)
+            self._log_event("store", f"the memory failed: {store_error}")
 
         return {
             "ok": True,
             "answer": answer,
             "stored": _count_of(stored),
             "results": _results_of(stored),
+            #: **What went wrong at the store.** The window says it,
+            #: and the answer is there anyway.
+            "store_error": store_error,
             "used_memories": len(memories),
             #: **What the model asked the web for.** The window shows
             #: it, so the user sees what left the machine.

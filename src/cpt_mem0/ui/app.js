@@ -902,6 +902,14 @@ async function send(text) {
       state.history = state.history.slice(-12);
     }
 
+    // **When the memory stumbles, the answer stays.** The window
+    // says what happened at the store - and the answer is there
+    // anyway.
+    if (result.store_error) {
+      say(`Das Merken hat nicht geklappt: ${result.store_error}`,
+          "system");
+    }
+
     const facts = result.results || [];
     if (facts.length) {
       const element = say("Gemerkt:", "system");

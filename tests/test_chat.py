@@ -230,3 +230,35 @@ class TestTheWeb:
         answer = web.run("web_fetch", {"url": "https://de.wikipedia.org/wiki/Python"})
         assert answer
 
+
+class TestTheEmbedderFlags:
+    """The embedder has to take a long text.
+
+    **mem0 embeds the whole conversation** - the question and the
+    answer together. A long dictation plus a long answer is more
+    than 512 tokens, and llama.cpp refuses anything that does not
+    fit into one physical batch. The embedder runs on the processor,
+    so the bigger batch costs memory and not VRAM.
+    """
+
+    def test_the_batch_is_bigger_than_the_default(self):
+        from cpt_mem0.autoconfig import EMBEDDER_FLAGS
+
+        assert "-ub" in EMBEDDER_FLAGS
+        index = EMBEDDER_FLAGS.index("-ub")
+        assert int(EMBEDDER_FLAGS[index + 1]) >= 2048
+
+    def test_the_context_matches_the_batch(self):
+        from cpt_mem0.autoconfig import EMBEDDER_FLAGS
+
+        context = int(EMBEDDER_FLAGS[EMBEDDER_FLAGS.index("-c") + 1])
+        batch = int(EMBEDDER_FLAGS[EMBEDDER_FLAGS.index("-ub") + 1])
+        assert context >= batch
+
+    def test_the_embedder_runs_on_the_processor(self):
+        """The card belongs to the model that answers."""
+        from cpt_mem0.autoconfig import EMBEDDER_FLAGS
+
+        index = EMBEDDER_FLAGS.index("-ngl")
+        assert int(EMBEDDER_FLAGS[index + 1]) == 0
+

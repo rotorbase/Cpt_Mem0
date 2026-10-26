@@ -150,6 +150,13 @@ def server() -> str:
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             creationflags=flags)
 
+        # **The recognition belongs to this program.** If the app is
+        # closed with the cross, the daemon is killed without a
+        # goodbye - and the recognition would stay on the card.
+        from . import proc
+
+        proc.die_with_me(_server)
+
         address = f"http://127.0.0.1:{port}"
         deadline = time.monotonic() + START_TIMEOUT
         while time.monotonic() < deadline:

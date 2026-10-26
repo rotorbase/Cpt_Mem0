@@ -192,6 +192,14 @@ class Supervisor:
                 cwd=str(spec.binary.parent),
                 **no_window,
             )
+            # **The model belongs to this program.** If the app is
+            # closed with the cross, the daemon is killed without a
+            # goodbye - and a llama-server would stay on the card
+            # with its weights, taking gigabytes away from everything
+            # else.
+            from . import proc
+
+            proc.die_with_me(process)
         except OSError as exc:
             if log_handle is not None:
                 log_handle.close()
