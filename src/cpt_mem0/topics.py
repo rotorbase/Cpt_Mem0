@@ -324,6 +324,76 @@ def _merge_similar(clusters: list[Cluster], vectors: list[list[float]],
 NAMED_TOPICS = 8
 
 
+def assign_to_taxonomy(clusters: list[Cluster], llm=None,
+                        cache: dict[str, str] | None = None
+                        ) -> dict[int, str]:
+    """Which of the fixed topics every group of facts belongs to.
+
+    **The model chooses from the list.** A free name would be a free
+    name - and a small model answers in English when it is asked
+    freely. A number is one of the eighteen topics, or nothing.
+
+    The words are the fallback: they are always there, and they put
+    a fact where it belongs when the model is not running.
+    """
+    from . import taxonomy
+
+    assignment: dict[int, str] = {}
+    for number, cluster in enumerate(clusters):
+        facts = list(cluster.facts)
+        if not facts:
+            continue
+
+        # **The model first.** It reads the facts and the menu, and
+        # it puts them where they belong - "mit dem Rad zur Arbeit"
+        # is not the job but the bicycle. The words are the fallback
+        # for the case that the model is not running.
+        if llm is not None:
+            key = "|".join(facts[:3])
+            chosen = ""
+            if cache is not None and key in cache:
+                chosen = cache[key]
+            else:
+                prompt = (
+                    "Welches Thema passt zu diesen Fakten?\n\n"
+                    "Antworte mit der Nummer und nichts weiter.\n\n"
+                    f"{taxonomy.menu()}\n\n"
+                    f"{chr(10).join('- ' + fact for fact in facts[:6])}"
+                )
+                try:
+                    answer = llm(prompt)
+                except Exception:
+                    answer = ""
+                if answer:
+                    digits = "".join(character for character in str(answer)
+                                     if character.isdigit())
+                    if digits:
+                        number_chosen = int(digits)
+                        if 1 <= number_chosen <= len(taxonomy.TOPICS):
+                            chosen = str(
+                                taxonomy.TOPICS[number_chosen - 1]["name"])
+                if cache is not None:
+                    cache[key] = chosen
+            if chosen:
+                assignment[number] = chosen
+                continue
+
+        # **The words.** They are free, and they put a fact where it
+        # belongs when the model is not running.
+        words = {}
+        for fact in facts:
+            for name, points in taxonomy.score(fact).items():
+                words[name] = words.get(name, 0) + points
+        if words:
+            order = {str(topic["name"]): number
+                     for number, topic in enumerate(taxonomy.TOPICS)}
+            best = max(words.items(),
+                        key=lambda item: (item[1], -order.get(item[0], 0)))[0]
+            assignment[number] = best
+
+    return assignment
+
+
 def _is_own_name(label: str, facts: list[str]) -> bool:
     """Whether the name is a name and not the fact again.
 

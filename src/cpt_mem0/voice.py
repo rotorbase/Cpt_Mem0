@@ -239,7 +239,12 @@ class Speaker:
         #: language, and the German one is not always installed - so
         #: the choice is the user's.
         self.name = name
+        #: **The last error.** The window shows it - a switch that
+        #: switches nothing is worse than no switch.
+        self.last_error = ""
         self._voice: Any = None
+        #: Whether COM was initialised in this thread.
+        self._initialised = False
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
 
@@ -250,11 +255,32 @@ class Speaker:
         one: the object stays alive and every sentence is a call on
         it. Without pywin32 the app talks to .NET instead, and every
         sentence costs a process - slower, but it speaks.
+
+        **The apartment belongs to the thread.** COM has to be
+        initialised in every thread that uses it - and the speech
+        runs in a thread of its own, because a sentence takes
+        seconds and the window may not freeze. Without
+        ``CoInitialize`` the call fails with "CoInitialize wurde
+        nicht aufgerufen", the error goes into the log, and the
+        window stays silent.
         """
         if self._voice is None:
             if not _com_available():
                 return None
             import win32com.client
+
+            # The apartment of this thread - and only of this
+            # thread. The window may call this from the thread that
+            # started the app, and the speech from the thread that
+            # speaks.
+            try:
+                import pythoncom
+
+                pythoncom.CoInitialize()
+                self._initialised = True
+            except Exception:
+                # Already initialised - that is not an error.
+                self._initialised = False
 
             voice = win32com.client.Dispatch("SAPI.SpVoice")
             if self.name:
@@ -295,6 +321,9 @@ class Speaker:
 
                 logging.getLogger("cpt_mem0.voice").warning(
                     "the voice failed: %s", error)
+                # **And the window has to hear about it.** The user
+                # cannot look into a log file of a frozen app.
+                self.last_error = str(error)
 
         self._thread = threading.Thread(target=run, daemon=True)
         self._thread.start()

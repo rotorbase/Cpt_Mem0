@@ -12,6 +12,8 @@
 const $ = (id) => document.getElementById(id);
 
 const state = {
+  // The eighteen topics with what is in them.
+  board: null,
   modelsLoaded: false,
   onGpu: false,
   appVram: 0,
@@ -91,6 +93,16 @@ function status(text, kind = "") {
 function renderTopics(clusters, colours) {
   const container = $("topics");
   container.innerHTML = "";
+
+  // **The board of the topics.** The names are fixed and the store
+  // fills them: a topic without anything in it is white, a topic
+  // with something in it lights up in its own colour.
+  const board = state.board;
+  if (board && board.topics) {
+    renderBoard(board);
+    return;
+  }
+
 
   // **Twenty fields, all of them visible.** The user wants to see
   // the whole conversation of the store at a glance - the fields
@@ -352,6 +364,128 @@ async function loadVoices() {
 }
 
 /* ------------------------------------------------------------------ */
+/* das Brett der Themen                                                  */
+/* ------------------------------------------------------------------ */
+
+/* **Eighteen topics, three groups.** The names do not change - the
+ * user has to recognise the button. A topic with something in it
+ * lights up, one without stays white. */
+function renderBoard(board) {
+  const container = $("topics");
+  container.innerHTML = "";
+  container.classList.add("board");
+
+  const byGroup = new Map();
+  for (const topic of board.topics || []) {
+    if (!byGroup.has(topic.group)) {
+      byGroup.set(topic.group, []);
+    }
+    byGroup.get(topic.group).push(topic);
+  }
+
+  for (const [group, topics] of byGroup) {
+    const section = document.createElement("div");
+    section.className = "topic-group";
+
+    const title = document.createElement("div");
+    title.className = "topic-group-label";
+    title.textContent = group;
+    section.appendChild(title);
+
+    const row = document.createElement("div");
+    row.className = "topic-row";
+    for (const topic of topics) {
+      const button = document.createElement("button");
+      button.type = "button";
+      // **White while it is empty.** A topic lights up as soon as
+      // the store has something in it.
+      button.classList.add("topic");
+      if (!topic.count) {
+        button.classList.add("empty-topic");
+      } else {
+        button.classList.add("filled-topic");
+        button.style.setProperty("--topic", topic.colour || "#2a2e36");
+        button.style.setProperty("--topic-fill", topic.fill || "transparent");
+      }
+      button.style.setProperty("--topic-glow", topic.count
+        ? "0 0 14px var(--topic), 0 0 34px var(--topic)"
+        : "none");
+
+      const label = document.createElement("span");
+      label.className = "topic-label";
+      label.textContent = topic.name;
+      button.appendChild(label);
+
+      const count = document.createElement("span");
+      count.className = "topic-count";
+      count.textContent = topic.count;
+      button.appendChild(count);
+
+      button.title = topic.count
+        ? `${topic.count} Erinnerungen in ${topic.name}`
+        : `Noch nichts in ${topic.name}`;
+      button.addEventListener("click", () => openTopic(topic));
+      row.appendChild(button);
+    }
+    section.appendChild(row);
+    container.appendChild(section);
+  }
+}
+
+/* **What is in this topic.** The window shows the groups of facts -
+ * the sub-themes - and every single one of them. */
+function openTopic(topic) {
+  const dialog = $("topic-dialog");
+  const title = $("topic-dialog-title");
+  const hint = $("topic-dialog-hint");
+  const body = $("topic-dialog-body");
+  if (!dialog) return;
+
+  title.textContent = topic.name;
+  hint.textContent = topic.count
+    ? `${topic.count} Erinnerungen im Store`
+    : "In diesem Thema ist noch nichts gespeichert.";
+
+  body.innerHTML = "";
+  if (!topic.count) {
+    const empty = document.createElement("p");
+    empty.className = "model-hint";
+    empty.textContent =
+      "Sobald du etwas erzählst, was hierher passt, "
+      + "erscheint es in diesem Fenster.";
+    body.appendChild(empty);
+  } else {
+    for (const part of topic.subtopics || []) {
+      const block = document.createElement("div");
+      block.className = "subtopic";
+
+      const head = document.createElement("div");
+      head.className = "subtopic-head";
+      const name = document.createElement("span");
+      name.className = "subtopic-name";
+      name.textContent = part.label;
+      const size = document.createElement("span");
+      size.className = "subtopic-size";
+      size.textContent = `${part.size}`;
+      head.appendChild(name);
+      head.appendChild(size);
+      block.appendChild(head);
+
+      const list = document.createElement("ul");
+      list.className = "subtopic-facts";
+      for (const fact of part.facts || []) {
+        const item = document.createElement("li");
+        item.textContent = fact;
+        list.appendChild(item);
+      }
+      block.appendChild(list);
+      body.appendChild(block);
+    }
+  }
+  dialog.showModal();
+}
+
+/* ------------------------------------------------------------------ */
 /* der Themenbaum                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -365,9 +499,18 @@ async function openTree() {
   if (!dialog) return;
 
   try {
-    const data = await api("/topics?count=18");
-    const clusters = data.clusters || [];
-    hint.textContent = `${clusters.length} Themen · ${data.facts || 0} Fakten`;
+    const data = await api("/topic-board");
+    const clusters = [];
+    for (const topic of data.topics || []) {
+      for (const part of topic.subtopics || []) {
+        clusters.push({
+          label: `${topic.name} · ${part.label}`,
+          size: part.size,
+          facts: part.facts,
+        });
+      }
+    }
+    hint.textContent = `${(data.topics || []).length} Themen · ${data.facts || 0} Fakten`;
     tree.innerHTML = "";
     for (const cluster of clusters) {
       const branch = document.createElement("div");
@@ -530,11 +673,11 @@ async function refresh() {
 
 async function refreshTopics() {
   try {
-    // **Six topics.** The number of buttons is fixed - the topics
-    // that are worked on come first, the rest fills up.
-    const data = await api("/topics?count=20");
-    state.clusters = data.clusters || [];
-    renderTopics(state.clusters, data.colours || []);
+    // **The board.** The eighteen topics with what is in them - and
+    // the names of the groups of facts, for the tree.
+    const data = await api("/topic-board");
+    state.board = data;
+    renderBoard(data);
   } catch (error) {
     // The topics need the vectors, not the models. If it fails, the
     // status line says why.
@@ -752,6 +895,9 @@ async function start() {
   });
   $("model-close").addEventListener("click", () => {
     $("model-dialog").close();
+  });
+  $("topic-dialog-close").addEventListener("click", () => {
+    $("topic-dialog").close();
   });
 
   // **The folder with the models.** The user puts the GGUF files

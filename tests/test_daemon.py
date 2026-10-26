@@ -923,9 +923,19 @@ class TestTheModelReachesTheConfiguration:
         assert config.llm.model_file is not None
 
     def test_the_user_configuration_is_not_touched(self, daemon, tmp_path):
-        """The test writes into its own directory."""
-        daemon.set_setting("model-folder", str(tmp_path))
+        """The test writes into its own directory.
+
+        **The file of the user is compared before and after.** A key
+        that the app itself writes - "model_folder" - says nothing
+        about who wrote it.
+        """
         real = Path(os.path.expanduser(r"~\AppData\Roaming\cpt-mem0"
                                        r"\config.yaml"))
-        if real.is_file():
-            assert "model_folder" not in real.read_text(encoding="utf-8")
+        before = (real.read_text(encoding="utf-8")
+                  if real.is_file() else None)
+
+        daemon.set_setting("model-folder", str(tmp_path))
+
+        after = (real.read_text(encoding="utf-8")
+                 if real.is_file() else None)
+        assert before == after

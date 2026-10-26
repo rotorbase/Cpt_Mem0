@@ -685,7 +685,16 @@ class Daemon:
             # holds the voice it was given.
             self._speaker = Speaker(name=name)
             self._voice_name = name
-        return self._speaker.speak(text)
+        spoken = self._speaker.speak(text)
+        # **What happened.** The window shows the reason when the
+        # voice stays silent - otherwise the user switches it on and
+        # hears nothing and does not know why.
+        self._voice_error = "" if spoken else (
+            getattr(self._speaker, "last_error", "")
+            or "Die Stimme konnte nicht angesprochen werden")
+        if self._voice_error:
+            self._log_event("voice", f"the voice failed: {self._voice_error}")
+        return spoken
 
     def models(self) -> dict[str, Any]:
         """Which models fit on the card, and where to get them.
@@ -803,6 +812,9 @@ class Daemon:
             #: the cluster, not its name - the name comes from the
             #: model and the model may name it differently tomorrow.
             "favourites": list(self.settings_data.get("favourites", [])),
+            #: **Why the voice stayed silent.** A switch that
+            #: switches nothing is worse than no switch.
+            "voice_error": getattr(self, "_voice_error", ""),
             #: Where the user keeps the models.
             "model_folder": (self.settings_data.get("model_folder")
                              or (str(self.config.llm.model_folder)
@@ -914,8 +926,10 @@ class Daemon:
             if bool(value):
                 # **A sound, right now.** The user switches the voice
                 # on to hear the voice - and if it stays silent, the
-                # switch is broken.
+                # switch is broken. The window has to learn what
+                # happened, and not only that the switch is on.
                 self.speak("Sprachausgabe aktiv.")
+            self._save_settings()
         elif name in ("model", "model-folder", "model_folder"):
             # **The model and the folder go into the configuration.**
             # They used to go into the settings of the window, and
@@ -1113,6 +1127,82 @@ class Daemon:
             "clusters": [entry.to_dict() for entry in clusters],
             "colours": colours,
             "count": len(clusters),
+            "facts": len(entries),
+        }
+
+    def topic_board(self) -> dict[str, Any]:
+        """The eighteen topics, and what is stored in each of them.
+
+        **The names are fixed.** A button that changes its name every
+        time the store grows asks for a new button every time - and
+        the user cannot recognise it. The names come from the
+        taxonomy, and the store fills them by itself.
+
+        A topic that holds nothing is white. A topic with something
+        in it lights up in its own colour - the six that were talked
+        about most recently shine full, the rest glow quiet.
+        """
+        from . import taxonomy
+        from .topics import assign_to_taxonomy, cluster, fills, name_clusters, palette
+
+        entries = self.engine.entries(limit=600) if self.engine else []
+        clusters = cluster(entries, k=12)
+
+        if not self.suspended:
+            # The names of the groups of facts - the sub-themes.
+            if not hasattr(self, "_topic_names"):
+                self._topic_names: dict[str, str] = {}
+            clusters = name_clusters(clusters, llm=self._ask_llm,
+                                     cache=self._topic_names)
+            if not hasattr(self, "_taxonomy_names"):
+                self._taxonomy_names: dict[str, str] = {}
+            assignment = assign_to_taxonomy(
+                clusters, llm=self._ask_llm, cache=self._taxonomy_names)
+        else:
+            assignment = assign_to_taxonomy(clusters)
+
+        # **What is in each topic.** The groups of facts that were
+        # filed under it, each with its own label - the sub-theme.
+        content: dict[str, list[dict[str, Any]]] = {}
+        for number, entry in enumerate(clusters):
+            name = assignment.get(number)
+            if not name:
+                continue
+            content.setdefault(name, []).append({
+                "label": entry.label,
+                "facts": list(entry.facts),
+                "size": entry.size,
+            })
+
+        # The order: the topics with the most facts come first, and
+        # the empty ones at the end.
+        ordered = sorted(
+            taxonomy.TOPICS,
+            key=lambda topic: (-len(content.get(str(topic["name"]), [])),
+                               str(topic["name"])))
+
+        colours = palette(len(ordered))
+        backgrounds = fills(len(ordered))
+
+        topics = []
+        for index, topic in enumerate(ordered):
+            name = str(topic["name"])
+            parts = content.get(name, [])
+            facts = [fact for part in parts for fact in part["facts"]]
+            topics.append({
+                "name": name,
+                "group": str(topic["group"]),
+                "count": len(facts),
+                "colour": colours[index],
+                "fill": backgrounds[index],
+                "facts": facts[:24],
+                "subtopics": parts,
+            })
+
+        return {
+            "topics": topics,
+            "groups": taxonomy.groups(),
+            "count": len(topics),
             "facts": len(entries),
         }
 
@@ -1447,6 +1537,10 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     # one - Windows has a voice per language, and the
                     # German one is not always installed.
                     self._send(200, daemon.voice_status())
+                    return
+
+                if path in ("/topic-board", "/v1/topic-board"):
+                    self._send(200, daemon.topic_board())
                     return
 
                 if path in ("/plan", "/v1/plan"):

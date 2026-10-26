@@ -276,3 +276,62 @@ class TestTheNameIsANewWord:
         name_clusters(clusters, llm=llm)
         assert "Deutsch" in asked[0]
 
+
+class TestTheBoard:
+    """The eighteen topics with their fixed names.
+
+    A button whose name changes every time the store grows asks for
+    a new button every time - and the user cannot recognise it.
+    """
+
+    def test_there_are_eighteen_topics_in_three_groups(self):
+        from cpt_mem0 import taxonomy
+
+        assert len(taxonomy.TOPICS) == 18
+        assert taxonomy.GROUPS == ["Alltag", "Interessen", "Umfeld"]
+        for group in taxonomy.GROUPS:
+            assert len([t for t in taxonomy.TOPICS if t["group"] == group]) == 6
+        # Every name is there once.
+        names = [t["name"] for t in taxonomy.TOPICS]
+        assert len(set(names)) == 18
+
+    def test_the_words_put_a_fact_where_it_belongs(self):
+        from cpt_mem0 import taxonomy
+
+        assert taxonomy.best("Der Nutzer hat einen Hund namens Bruno.") == "Tiere"
+        assert taxonomy.best("Der Nutzer hört gerne Musik.") == "Musik"
+        assert taxonomy.best("Der Nutzer kocht gern Pizza.") == "Essen"
+
+    def test_the_model_chooses_from_the_list(self):
+        """A number is one of the eighteen topics - a free name is
+        not."""
+        from cpt_mem0.topics import Cluster, assign_to_taxonomy
+
+        asked = []
+
+        def llm(prompt):
+            asked.append(prompt)
+            return "14"
+
+        clusters = [Cluster(label="x", facts=["Rad zur Arbeit"], size=1)]
+        result = assign_to_taxonomy(clusters, llm=llm)
+        assert result[0] == "Auto & Rad"
+        # The menu is in the prompt.
+        assert "Auto & Rad" in asked[0]
+        assert "Bücher" in asked[0]
+
+    def test_the_words_are_the_fallback(self):
+        from cpt_mem0.topics import Cluster, assign_to_taxonomy
+
+        clusters = [Cluster(label="x", facts=["Der Nutzer hat einen Hund."],
+                            size=1)]
+        result = assign_to_taxonomy(clusters)
+        assert result[0] == "Tiere"
+
+    def test_the_answer_of_the_model_is_numbered(self):
+        from cpt_mem0 import taxonomy
+
+        menu = taxonomy.menu()
+        assert menu.startswith("1. Beruf")
+        assert "18. Lernen" in menu
+

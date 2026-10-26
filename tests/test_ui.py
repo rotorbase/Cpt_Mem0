@@ -145,14 +145,14 @@ class TestTheUserInterface:
         """
         html = (UI_DIR / "index.html").read_text(encoding="utf-8")
         script = (UI_DIR / "app.js").read_text(encoding="utf-8")
-        assert "/topics?count=20" in script
-        assert "empty-slot" in script
+        assert "/topic-board" in script
+        assert "renderBoard" in script
         assert "topic-star" not in script
         # The section for the marked topics is gone with the stars.
         assert 'id="favourites"' not in html
 
         style = (UI_DIR / "style.css").read_text(encoding="utf-8")
-        assert "grid-template-columns" in style
+        assert "topic-row" in style
         # The field grows under the mouse.
         assert ".topic:hover" in style
         assert "scale(1.16)" in style
@@ -192,7 +192,7 @@ class TestTheUserInterface:
         assert "/runtime/" in script
         assert "suspend" in script
         assert "resume" in script
-        assert "/topics" in script
+        assert "/topic-board" in script
         assert "/memories/reset" in script
 
 
@@ -784,4 +784,50 @@ class TestTheWindowHasNoAutostart:
         html = (UI_DIR / "index.html").read_text(encoding="utf-8")
         assert 'id="voice"' in html
         assert "Sprachausgabe" in html
+
+
+class TestTheTopicBoard:
+    """Eighteen buttons in three groups, and a window per button."""
+
+    def test_the_topics_are_a_board_with_three_groups(self):
+        script = (UI_DIR / "app.js").read_text(encoding="utf-8")
+        assert "renderBoard" in script
+        assert "topic-group" in script
+        assert "/topic-board" in script
+
+    def test_an_empty_topic_is_white(self):
+        script = (UI_DIR / "app.js").read_text(encoding="utf-8")
+        assert "empty-topic" in script
+        style = (UI_DIR / "style.css").read_text(encoding="utf-8")
+        assert ".topic.empty-topic" in style
+
+    def test_a_click_opens_the_window_with_the_memories(self):
+        script = (UI_DIR / "app.js").read_text(encoding="utf-8")
+        assert "openTopic" in script
+        assert "subtopic-facts" in script
+        html = (UI_DIR / "index.html").read_text(encoding="utf-8")
+        assert 'id="topic-dialog"' in html
+
+
+class TestTheTopicBoardRoute:
+    """The board of the eighteen topics."""
+
+    @pytest.fixture
+    def running(self, daemon):
+        daemon._start_http()
+        yield daemon
+        daemon.stop()
+
+    def test_the_topic_board(self, running):
+        port = running._http.server_address[1]
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/topic-board", timeout=5) as response:
+            data = json.loads(response.read())
+        assert len(data["topics"]) == 18
+        assert len(data["groups"]) == 3
+        for topic in data["topics"]:
+            assert topic["name"]
+            assert topic["group"] in ("Alltag", "Interessen", "Umfeld")
+            assert "count" in topic
+            assert "subtopics" in topic
 

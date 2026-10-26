@@ -473,15 +473,40 @@ body.plain .send { background: var(--accent); }
 /* **Six topics, six buttons.** The buttons keep their width when
  * there are fewer topics, so a topic does not change its size every
  * time the store grows. */
-/* **Twenty topics, all of them at once.** The fields are small and
- * the text is short - the user wants to see the whole conversation
- * of the store at a glance, not one topic at a time. */
+/* **The board of the topics.** Three groups, and in each of them a
+ * row of small fields. The names are fixed, so the user recognises
+ * the button - and a topic that is empty stays white. */
 .topics {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
-  gap: 7px;
-  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 14px 10px;
   align-items: stretch;
+}
+
+.topics.board { overflow-y: auto; }
+
+.topic-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 2px;
+}
+
+.topic-group-label {
+  flex: 0 0 78px;
+  font-size: 9px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: right;
+}
+
+.topic-row {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 7px;
+  flex: 1 1 auto;
 }
 
 /* **The topics are the keys of a synthesizer.** Neon, and the six
@@ -494,7 +519,7 @@ body.plain .send { background: var(--accent); }
   background: var(--topic-fill, transparent);
   min-width: 0;
   max-width: none;
-  height: 74px;
+  height: 54px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -549,9 +574,27 @@ body.plain .send { background: var(--accent); }
   word-break: break-word;
 }
 
+/* **White while it is empty.** The store fills the button by itself
+ * - and a button that holds nothing has nothing to show. */
+.topic.empty-topic {
+  background: rgba(255, 255, 255, .06);
+  border-color: rgba(255, 255, 255, .38);
+  box-shadow: none;
+  color: var(--text);
+}
+.topic.empty-topic .topic-label { color: rgba(255, 255, 255, .82); }
+.topic.empty-topic .topic-count { color: rgba(255, 255, 255, .45); }
+.topic.empty-topic:hover {
+  background: rgba(255, 255, 255, .12);
+  border-color: rgba(255, 255, 255, .7);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .5);
+}
+
+.topic.filled-topic { color: var(--text); }
+
 /* The placeholders: the row does not jump when a topic appears. */
 .empty-slot {
-  height: 74px;
+  height: 54px;
   border-radius: var(--radius);
   border: 1px dashed var(--line);
   background: transparent;
@@ -847,3 +890,55 @@ body.plain .send { background: var(--accent); }
   font-size: 12px;
   padding: 2px 2px 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* das Fenster eines Themas                                               */
+/* ------------------------------------------------------------------ */
+
+.topic-dialog {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 18px 20px;
+  width: min(760px, 92vw);
+  max-height: 84vh;
+  box-shadow: var(--shadow);
+}
+.topic-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+
+.topic-dialog-body {
+  max-height: 64vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* **The groups of facts under one topic.** The sub-theme is the
+ * heading, and under it stands every single memory - nothing is
+ * summarised away. */
+.subtopic {
+  border-left: 2px solid var(--accent);
+  padding: 2px 0 10px 12px;
+  margin-bottom: 10px;
+}
+.subtopic:last-child { margin-bottom: 0; }
+
+.subtopic-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.subtopic-name { font-weight: 600; font-size: 13px; }
+.subtopic-size {
+  font: 11px "Consolas", ui-monospace, monospace;
+  color: var(--muted);
+}
+
+.subtopic-facts {
+  margin: 6px 0 0;
+  padding-left: 17px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.subtopic-facts li { margin-bottom: 3px; }
