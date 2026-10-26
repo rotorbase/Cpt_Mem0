@@ -129,6 +129,50 @@ class MemoryService:
             "results": _results_of(result),
         }
 
+    def chat(self, text: str, user_id: str | None = None) -> dict[str, Any]:
+        """Answer the user and remember the conversation.
+
+        **This is the whole thing.** The model answers - that is the
+        inference - and the exchange goes into mem0, so the memory
+        holds the communication and not only the question.
+
+        The order matters. The answer comes first, because that is
+        what the user is waiting for; the extraction runs afterwards
+        and uses the answer, because what the assistant said belongs
+        to the conversation too.
+        """
+        if not text or not text.strip():
+            raise ApiError("the text is empty")
+        self._require_models("the answer")
+
+        # **What the memory knows about the question.** The model
+        # gets it in the prompt - that is the difference between a
+        # memory and a chatbot.
+        known = self.engine.recall(text, user_id, limit=8)
+        memories = [str(item.get("memory") or "") for item in known]
+        memories = [item for item in memories if item]
+
+        answer = self.engine.ask(text, memories)
+
+        # **The communication goes into the store.** Both sides: what
+        # the user said and what came back.
+        from .engine import EXTRACTION_PROMPT
+
+        conversation = [
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": answer},
+        ]
+        stored = self.engine.remember_conversation(
+            conversation, user_id, prompt=EXTRACTION_PROMPT)
+
+        return {
+            "ok": True,
+            "answer": answer,
+            "stored": _count_of(stored),
+            "results": _results_of(stored),
+            "used_memories": len(memories),
+        }
+
     def recall(self, query: str, user_id: str | None = None,
                limit: int = 5) -> dict[str, Any]:
         """Search the store."""
@@ -1141,6 +1185,19 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     self._send(200, result)
                     return
 
+                if path in ("/chat", "/v1/chat"):
+                    # **The chat.** The model answers, and the exchange
+                    # goes into the memory.
+                    text = str(body.get("text") or body.get("content")
+                               or body.get("message") or "")
+                    user = body.get("user_id")
+                    result = service.chat(text, user)
+                    from .voice import summarise
+
+                    daemon.speak(summarise(result.get("results", [])))
+                    self._send(200, result)
+                    return
+
                 if path in ("/search", "/v1/search", "/recall"):
                     query = str(body.get("query") or body.get("q") or "")
                     user = body.get("user_id")
@@ -1263,6 +1320,22 @@ def mcp_tools(service: MemoryService) -> list[dict[str, Any]]:
     ones in SPEC 12.1.
     """
     return [
+        {
+            "name": "chat",
+            "description": "Answer the user and remember the "
+                           "conversation. The model answers, and the "
+                           "exchange goes into the memory.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "What the user said."}},
+                "required": ["text"],
+            },
+            "handler": lambda args: service.chat(
+                str(args.get("text") or "")),
+        },
         {
             "name": "remember",
             "description": "Store a fact. The LLM extracts the facts "

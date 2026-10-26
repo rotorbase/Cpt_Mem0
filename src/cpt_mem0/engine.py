@@ -152,6 +152,50 @@ def memory_config(llm: Endpoint, embedder: Endpoint, store_path: Path,
     }
 
 
+#: The prompt that turns a message into facts.
+#:
+#: mem0's own prompt is strict: it looks for statements that are
+#: worth remembering and leaves out everything short. A user who
+#: writes "I ride the bike to work every day" gets an empty list
+#: back - and the window says "there was nothing to remember", which
+#: reads like a broken app.
+#:
+#: This prompt asks for the plain facts too. A single sentence is a
+#: fact.
+EXTRACTION_PROMPT = """Extract every durable fact from the conversation.
+
+A durable fact is a statement about the user that is still true
+tomorrow: their preferences, their plans, their work, their
+environment, their relationships, their health, their equipment, the
+things they like and the things they dislike.
+
+Rules:
+- A single sentence can be a fact. "I ride the bike to work every day"
+  is one fact, not zero.
+- Keep the wording of the user as close as you can.
+- Never invent anything. Only what was said.
+- Do not store small talk, greetings or questions.
+- If the conversation really contains nothing durable, return an
+  empty list.
+- Answer with JSON only, in this form:
+  {"memory": ["the first fact", "the second fact"]}"""
+
+#: The system prompt of the chat.
+#:
+#: The model is not only there to extract facts - it is the one that
+#: answers. It gets the memories of the user, and it answers in the
+#: language of the user.
+CHAT_SYSTEM_PROMPT = """You are the memory of this person. You answer
+in the same language the person writes in.
+
+What you know about them is listed below. Use it. If they ask about
+something that is not in the list, say that you do not know it. Never
+invent facts about them.
+
+Keep the answers short. Two or three sentences are usually enough."""
+
+
+
 class Engine:
     """The memory engine.
 
@@ -230,11 +274,16 @@ class Engine:
         return self._memory
 
     def remember(self, text: str, user_id: str | None = None,
-                 metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+                  metadata: dict[str, Any] | None = None, prompt: str | None = None) -> dict[str, Any]:
         """Store a text and return what mem0 extracted.
 
         The LLM does the extraction: it turns a sentence into facts.
         That is why a write costs an LLM call and a search does not.
+
+        **The prompt can be replaced.** mem0 asks for the facts that
+        are worth remembering and leaves out the short ones - which made
+        the window say "there was nothing to remember" for a perfectly
+        good sentence. The default here asks for the plain facts too.
         """
         memory = self._require_open()
         options: dict[str, Any] = {
@@ -243,6 +292,8 @@ class Engine:
         }
         if metadata:
             options["metadata"] = metadata
+        if prompt:
+            options["prompt"] = prompt
         try:
             result = memory.add(text, **options)
         except TypeError:
@@ -250,6 +301,95 @@ class Engine:
             # same way. Try the positional form.
             result = memory.add(text, user_id or self.user_id)
         return _as_dict(result)
+
+    def remember_conversation(
+            self,
+            messages: list[dict[str, str]],
+            user_id: str | None = None,
+            metadata: dict[str, Any] | None = None,
+            prompt: str | None = None) -> dict[str, Any]:
+        """Store the conversation itself.
+
+        **The communication, not only the question.** mem0 takes a
+        list of messages and extracts from the whole exchange: what
+        the user said and what came back. That is what makes the
+        memory a memory of the conversation and not a list of
+        sentences.
+
+        The list is the OpenAI format, and mem0 reads it as it is:
+        ``[{"role": "user", "content": ...}, {"role": "assistant",
+        "content": ...}]``
+        """
+        memory = self._require_open()
+        options: dict[str, Any] = {
+            "user_id": user_id or self.user_id,
+            "infer": True,
+        }
+        if metadata:
+            options["metadata"] = metadata
+        if prompt:
+            options["prompt"] = prompt
+        try:
+            result = memory.add(messages, **options)
+        except TypeError:
+            result = memory.add(messages, user_id or self.user_id)
+        return _as_dict(result)
+
+    def ask(self, text: str,
+            memories: list[str] | None = None,
+            max_tokens: int = 600,
+            temperature: float = 0.7) -> str:
+        """Ask the model and get an answer.
+
+        **This is the inference.** The model on the card has two
+        jobs: it extracts the facts (inside mem0) and it answers.
+        The second one was missing, so the window could store what
+        you said but could never reply.
+
+        The endpoint is the OpenAI-compatible one of llama.cpp, and
+        the model is the one that is loaded. The memories are part
+        of the prompt: that is what makes it a memory and not a
+        chatbot.
+        """
+        endpoint = self.llm
+        system = CHAT_SYSTEM_PROMPT
+        if memories:
+            lines = "\n".join(f"- {item}" for item in memories)
+            system += (f"\n\nWhat you know about this person:\n{lines}")
+
+        payload = json.dumps({
+            "model": endpoint.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": text},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": False,
+        }).encode("utf-8")
+        request = urllib.request.Request(
+            endpoint.url("/chat/completions"), data=payload,
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {endpoint.api_key}"},
+            method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=300) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:400]
+            raise EngineError(
+                f"the model refused the request ({exc.code}): {detail}"
+            ) from exc
+        except Exception as exc:
+            raise EngineError(
+                f"the model did not answer: {exc}") from exc
+
+        choices = body.get("choices") or []
+        if not choices:
+            return ""
+        message = choices[0].get("message") or {}
+        return str(message.get("content") or "").strip()
+
 
     def recall(self, query: str, user_id: str | None = None,
                limit: int = 5) -> list[dict[str, Any]]:

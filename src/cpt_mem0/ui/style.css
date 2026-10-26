@@ -270,6 +270,14 @@ body {
   align-self: flex-end;
   background: #1b2a3f;
   border-color: #24405f;
+}\n/* The answer of the model. It is the voice of the app, so it looks like a voice and not like a system note. */\n.msg.assistant {
+  align-self: flex-end;
+  background: #1b2a3f;
+  border-color: #24405f;
+}\n.msg.assistant { color: var(--text); }\n.msg.assistant.waiting {
+  align-self: flex-end;
+  background: #1b2a3f;
+  border-color: var(--muted); font-style: italic; #24405f;
 }
 
 .msg.system {

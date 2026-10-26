@@ -293,16 +293,27 @@ async function send(text) {
   sayWithFacts(text, null);
 
   if (state.suspended) {
-    say("Die Modelle sind aus. Schalte sie oben ein, dann kann ich merken.",
+    say("Die Modelle sind aus. Schalte sie oben ein, dann kann ich antworten.",
         "system");
     return;
   }
 
+  // **The answer takes a moment.** A 9B on a consumer card needs a
+  // second or two for the first tokens, and the line shows that
+  // something is happening instead of standing empty.
+  const waiting = say("…", "assistant waiting");
+
   try {
-    const result = await api("/memories", {
+    // **The chat, not the write.** The model answers, and the
+    // exchange goes into the memory.
+    const result = await api("/chat", {
       method: "POST",
       body: JSON.stringify({ text }),
     });
+
+    waiting.remove();
+    say(result.answer || "Keine Antwort.", "assistant");
+
     const facts = result.results || [];
     if (facts.length) {
       const element = say("Gemerkt:", "system");
@@ -320,6 +331,7 @@ async function send(text) {
     await refresh();
     await refreshTopics();
   } catch (error) {
+    waiting.remove();
     say(error.message, "system");
     status(error.message, "error");
   }
