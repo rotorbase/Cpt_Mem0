@@ -46,6 +46,8 @@ body {
 .bar {
   display: flex;
   align-items: center;
+  padding: 13px 20px;
+  gap: 20px;
   gap: 24px;
   padding: 10px 16px 20px;
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
@@ -454,10 +456,83 @@ body.plain .send { background: var(--accent); }
 /* **Six topics, six buttons.** The buttons keep their width when
  * there are fewer topics, so a topic does not change its size every
  * time the store grows. */
+/* **Twenty topics, all of them at once.** The fields are small and
+ * the text is short - the user wants to see the whole conversation
+ * of the store at a glance, not one topic at a time. */
+.topics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 7px;
+  padding: 10px 14px 12px;
+  align-items: stretch;
+}
+
 .topic {
-  flex: 0 1 auto;
-  min-width: 96px;
-  max-width: 210px;
+  position: relative;
+  min-width: 0;
+  max-width: none;
+  height: 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 8px 9px;
+  overflow: hidden;
+  transition: transform .16s ease, box-shadow .16s ease,
+              border-color .16s ease;
+}
+
+/* **The button grows under the mouse.** A small field with a small
+ * text is hard to read - and the user cannot see what is written in
+ * it. Under the mouse the field grows and comes forward, and the
+ * text is shown in full. */
+.topic:hover {
+  transform: scale(1.16);
+  z-index: 6;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .65);
+  border-color: var(--topic);
+  overflow: visible;
+}
+.topic:hover .topic-label {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 6px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: var(--panel-2);
+  border: 1px solid var(--topic);
+  border-radius: 8px;
+  padding: 6px;
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: normal;
+  word-break: break-word;
+  z-index: 2;
+}
+.topic:hover .topic-count { opacity: 0; }
+
+.topic-label {
+  font-size: 11px;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* The placeholders: the row does not jump when a topic appears. */
+.empty-slot {
+  height: 74px;
+  border-radius: var(--radius);
+  border: 1px dashed var(--line);
+  background: transparent;
+  opacity: .45;
 }
 
 /* The star on a topic. It marks the topic as one the user works on,
@@ -524,12 +599,12 @@ body.plain .send { background: var(--accent); }
  * from the server, not from a guess. */
 .cockpit {
   position: absolute;
-  right: 14px;
-  bottom: 10px;
+  right: 16px;
+  bottom: 12px;
   display: flex;
-  gap: 14px;
+  gap: 18px;
   align-items: flex-end;
-  padding: 8px 14px;
+  padding: 11px 18px;
   border-radius: 12px;
   background: rgba(20, 22, 26, .82);
   border: 1px solid var(--line);
@@ -545,7 +620,7 @@ body.plain .send { background: var(--accent); }
   min-width: 52px;
 }
 .dial-value {
-  font: 600 17px/1 "Consolas", ui-monospace, monospace;
+  font: 600 21px/1 "Consolas", ui-monospace, monospace;
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
@@ -671,4 +746,67 @@ body.plain .send { background: var(--accent); }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ */
+/* der Themenbaum                                                        */
+/* ------------------------------------------------------------------ */
+
+.link-button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.link-button:hover { color: var(--text); }
+
+.tree-dialog {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 18px 20px;
+  width: min(860px, 94vw);
+  max-height: 86vh;
+  box-shadow: var(--shadow);
+}
+.tree-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+
+.tree { max-height: 68vh; overflow-y: auto; padding-right: 4px; }
+
+.branch {
+  border-left: 2px solid var(--line);
+  padding: 2px 0 10px 12px;
+  margin-bottom: 10px;
+}
+.branch:last-child { margin-bottom: 0; }
+.branch-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.branch-name { font-weight: 600; font-size: 13px; }
+.branch-count {
+  font: 11px "Consolas", ui-monospace, monospace;
+  color: var(--muted);
+}
+.branch-facts {
+  margin: 5px 0 0;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.branch-facts li { margin-bottom: 2px; }
+
+/* The note under the fields when the store is empty. */
+.topics-note {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 2px 2px 0;
 }

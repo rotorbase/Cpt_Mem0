@@ -12,11 +12,22 @@
 
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { spawn } = require("child_process");
+const fs = require("fs");
 const path = require("path");
 const http = require("http");
 
-const PORT = 8765;
-const ADDRESS = `http://127.0.0.1:${PORT}`;
+/** Where the backend writes the port it got.
+ *
+ * The configuration may say 0, and then the system picks a free
+ * port - the app is then on a port nobody knows. The backend writes
+ * it here, and the window waits for the file.
+ */
+const PORT_FILE = path.join(
+  process.env.LOCALAPPDATA || process.env.APPDATA
+    || path.join(process.env.HOME || "", ".local", "share"),
+  "cpt-mem0", "state", "daemon.port");
+
+let address = "http://127.0.0.1:8765";
 
 let backend = null;
 let mainWindow = null;
@@ -37,11 +48,21 @@ function backendPath() {
   return null;
 }
 
-/** Wait until the backend answers. */
+/** Wait until the backend answers, and learn its port. */
 function waitForBackend(attempts = 120) {
   return new Promise((resolve, reject) => {
     const tryOnce = (left) => {
-      const request = http.get(`${ADDRESS}/status`, (response) => {
+      // The port the backend picked, if it wrote one.
+      try {
+        const port = fs.readFileSync(PORT_FILE, "utf-8").trim();
+        if (port) {
+          address = `http://127.0.0.1:${port}`;
+        }
+      } catch (error) {
+        // No file yet - the default stays.
+      }
+
+      const request = http.get(`${address}/status`, (response) => {
         response.resume();
         resolve();
       });
@@ -108,7 +129,7 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadURL(ADDRESS);
+  mainWindow.loadURL(address);
 
   // A link goes into the browser, not into the app.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {

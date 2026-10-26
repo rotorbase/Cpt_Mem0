@@ -56,6 +56,27 @@ class Cluster:
         }
 
 
+#: How many words a name on a button may have.
+NAME_WORDS = 3
+
+
+def shorten(text: str, words: int = NAME_WORDS) -> str:
+    """A name that fits on a button.
+
+    **The buttons are small and there are many of them.** Without a
+    name that fits, the text of a fact becomes the name of the topic
+    - and a fact is a sentence, not a label. The first words carry
+    the meaning; the rest is cut off.
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+    parts = text.split()
+    if len(parts) <= words:
+        return text
+    return " ".join(parts[:words]) + "…"
+
+
 def _dot(a: list[float], b: list[float]) -> float:
     """The dot product of two vectors."""
     total = 0.0
@@ -209,7 +230,10 @@ def cluster(entries: list[tuple[str, list[float]]],
             continue
         facts = [texts[index] for index in members]
         clusters.append(Cluster(
-            label=facts[0],
+            # **A name that fits on the button.** Without a model to
+            # name the topic, the first fact is the name - and a fact
+            # is a sentence.
+            label=shorten(facts[0]),
             facts=facts,
             size=len(facts),
             spread=_spread(vectors, centres[centre_index], members),
@@ -294,12 +318,14 @@ def name_clusters(clusters: list[Cluster], llm=None) -> list[Cluster]:
         return clusters
 
     for cluster in clusters:
+        cluster.label = shorten(cluster.label)
         facts = "\n".join(f"- {fact}" for fact in cluster.facts[:8])
         prompt = (
-            "These facts belong to one topic. Name the topic in two or "
-            "three words, **in German**. The facts themselves may be in "
+            "These facts belong to one topic. Name the topic in **one or "
+            "two words**, **in German**. The facts themselves may be in "
             "any language - the name is what the user reads on a "
-            "button, and the interface is German.\n\n"
+            "button, and the interface is German. The name has to fit on "
+            "a small button, so it must be short.\n\n"
             "**Name the subject, not the category.** If the facts are "
             "about fairy tales, the name is the subject - \"Märchen\" or "
             "\"fairy tales\" - and not the category \"preferences\" or "

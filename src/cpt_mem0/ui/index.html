@@ -33,6 +33,11 @@
       <span class="meter-label">MODELLE</span>
       <span class="meter-value" id="models">–</span>
     </div>
+    <div class="meter">
+      <span class="meter-label">THEMEN</span>
+      <button type="button" class="link-button" id="open-tree">
+        alle ansehen</button>
+    </div>
   </div>
 
   <button class="power" id="power" title="Modelle ein- und ausschalten">
@@ -43,13 +48,6 @@
 
 <!-- Die Themen-Tasten: wie ein Equalizer -->
 <nav class="topics" id="topics"></nav>
-
-<!-- Die Themen, die der User gemerkt hat: sie bleiben, wenn es mehr
-     Themen gibt als Knöpfe. -->
-<div class="favourites" id="favourites" hidden>
-  <span class="favourites-label">Deine Themen</span>
-  <div class="favourites-list" id="favourites-list"></div>
-</div>
 
 <!-- Die Chat-Zeile -->
 <main class="chat">
@@ -121,6 +119,16 @@
     <button type="button" class="danger" id="wipe">Alle Erinnerungen löschen</button>
   </div>
 </footer>
+
+<!-- Der Themenbaum: alle Themen mit ihren Fakten. -->
+<dialog class="tree-dialog" id="tree-dialog">
+  <div class="model-head">
+    <h2>Alle Themen</h2>
+    <button type="button" class="close" id="tree-close">×</button>
+  </div>
+  <p class="model-hint" id="tree-hint"></p>
+  <div class="tree" id="tree"></div>
+</dialog>
 
 <!-- Die Modellvorschlaege: was passt auf die Karte, und wo es her
      kommt. -->

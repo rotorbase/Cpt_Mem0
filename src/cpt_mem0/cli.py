@@ -553,7 +553,7 @@ def cmd_ui(args) -> int:
     API is reachable, the memory is there, and the VRAM stays free
     until the big switch is pressed.
     """
-    from .config import Config
+    from .config import load_config
     from .daemon import Daemon, DaemonPaths
     from .window import (
         BROWSER_FALLBACK,
@@ -568,7 +568,12 @@ def cmd_ui(args) -> int:
     # around the window goes into the log file.
     setup_logging()
 
-    config = Config()
+    # **The configuration is read.** Without this the app ran with
+    # the defaults: no model files, the standard port, and the
+    # standard store - and the settings the user made were never
+    # seen by anything.
+    config_path = Path(args.config) if getattr(args, "config", None) else None
+    config = load_config(config_path)
     daemon = Daemon(config, DaemonPaths.default())
 
     # **The models do not come up with the app.** The switch in the
@@ -735,6 +740,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ui = sub.add_parser(
         "ui", help="open the window")
+    ui.add_argument("--config", help="path to the config file")
     ui.add_argument("--no-browser", action="store_true",
                     help="open the system browser instead of the native "
                          "window")

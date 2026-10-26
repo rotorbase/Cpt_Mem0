@@ -92,13 +92,24 @@ function renderTopics(clusters, colours) {
   const container = $("topics");
   container.innerHTML = "";
 
+  // **Twenty fields, all of them visible.** The user wants to see
+  // the whole conversation of the store at a glance - the fields
+  // that are not filled yet are placeholders, so the row does not
+  // jump when a new topic appears, and the empty store looks the
+  // same as a full one.
+  const wanted = Math.max(20, clusters.length);
+  for (let empty = clusters.length; empty < wanted; empty++) {
+    const slot = document.createElement("div");
+    slot.className = "topic empty-slot";
+    slot.title = "Noch kein Thema";
+    container.appendChild(slot);
+  }
+
   if (!clusters.length) {
-    const empty = document.createElement("button");
-    empty.className = "topic empty";
-    empty.textContent = "Noch keine Themen";
-    empty.disabled = true;
-    container.appendChild(empty);
-    return;
+    const note = document.createElement("div");
+    note.className = "topics-note";
+    note.textContent = "Noch keine Themen - der Store ist leer.";
+    container.appendChild(note);
   }
 
   clusters.forEach((cluster, index) => {
@@ -108,44 +119,6 @@ function renderTopics(clusters, colours) {
       button.classList.add("active");
     }
     button.style.setProperty("--topic", colours[index] || "#2a2e36");
-
-    // **The star.** A topic the user works on stays at the front,
-    // even when there are more topics than buttons. The star is on
-    // the first fact of the topic, not on its name - the name comes
-    // from the model, and the model names it differently tomorrow.
-    const marked = state.favourites.includes(cluster.fact);
-    const star = document.createElement("span");
-    star.className = "topic-star";
-    star.setAttribute("role", "button");
-    star.setAttribute("tabindex", "0");
-    star.textContent = marked ? "★" : "☆";
-    star.title = marked
-      ? "Aus den Lieblingsthemen entfernen"
-      : "Als Lieblingsthema merken";
-    const markFavourite = async (event) => {
-      event.stopPropagation();
-      try {
-        const result = await api("/settings/favourites", {
-          method: "POST",
-          body: JSON.stringify({ fact: cluster.fact, enabled: true }),
-        });
-        state.favourites = result.favourites || [];
-        renderTopics(clusters, colours);
-        renderFavourites();
-        status(state.favourites.includes(cluster.fact)
-          ? `Thema gemerkt: ${cluster.label}`
-          : `Thema vergessen: ${cluster.label}`);
-      } catch (error) {
-        status(error.message, "error");
-      }
-    };
-    star.addEventListener("click", markFavourite);
-    star.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        markFavourite(event);
-      }
-    });
-    button.appendChild(star);
 
     const label = document.createElement("span");
     label.className = "topic-label";
@@ -250,23 +223,8 @@ function renderLoading() {
 /* ------------------------------------------------------------------ */
 
 function renderFavourites() {
-  const box = $("favourites");
-  const list = $("favourites-list");
-  if (!box || !list) return;
-  list.innerHTML = "";
-
-  if (!state.favourites.length) {
-    box.hidden = true;
-    return;
-  }
-  box.hidden = false;
-  for (const fact of state.favourites) {
-    const chip = document.createElement("span");
-    chip.className = "favourite-chip";
-    chip.textContent = fact.length > 28 ? `${fact.slice(0, 28)}…` : fact;
-    chip.title = fact;
-    list.appendChild(chip);
-  }
+  // **The stars are gone.** The topics are all shown at once, so
+  // there is nothing to mark and nothing to keep in front.
 }
 
 /* ------------------------------------------------------------------ */
@@ -358,6 +316,62 @@ async function loadVoices() {
       status(error.message, "error");
     }
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* der Themenbaum                                                        */
+/* ------------------------------------------------------------------ */
+
+/* **Everything in one place.** The buttons show the topics, small
+ * and short. The tree shows the whole network: every topic with the
+ * facts under it, and how many there are. */
+async function openTree() {
+  const dialog = $("tree-dialog");
+  const tree = $("tree");
+  const hint = $("tree-hint");
+  if (!dialog) return;
+
+  try {
+    const data = await api("/topics?count=20");
+    const clusters = data.clusters || [];
+    hint.textContent = `${clusters.length} Themen · ${data.facts || 0} Fakten`;
+    tree.innerHTML = "";
+    for (const cluster of clusters) {
+      const branch = document.createElement("div");
+      branch.className = "branch";
+
+      const head = document.createElement("div");
+      head.className = "branch-head";
+      const name = document.createElement("span");
+      name.className = "branch-name";
+      name.textContent = cluster.label;
+      const count = document.createElement("span");
+      count.className = "branch-count";
+      count.textContent = cluster.size;
+      head.appendChild(name);
+      head.appendChild(count);
+      branch.appendChild(head);
+
+      const list = document.createElement("ul");
+      list.className = "branch-facts";
+      for (const fact of cluster.facts || []) {
+        const item = document.createElement("li");
+        item.textContent = fact;
+        list.appendChild(item);
+      }
+      branch.appendChild(list);
+      tree.appendChild(branch);
+    }
+    if (!clusters.length) {
+      const empty = document.createElement("p");
+      empty.className = "model-hint";
+      empty.textContent = "Im Store ist noch nichts.";
+      tree.appendChild(empty);
+    }
+  } catch (error) {
+    hint.textContent = error.message;
+  }
+  dialog.showModal();
 }
 
 /* ------------------------------------------------------------------ */
@@ -477,7 +491,7 @@ async function refreshTopics() {
   try {
     // **Six topics.** The number of buttons is fixed - the topics
     // that are worked on come first, the rest fills up.
-    const data = await api("/topics?count=6");
+    const data = await api("/topics?count=20");
     state.clusters = data.clusters || [];
     renderTopics(state.clusters, data.colours || []);
   } catch (error) {
@@ -682,6 +696,10 @@ async function start() {
   loadVoices();
 
   $("show-models").addEventListener("click", showModels);
+  $("open-tree").addEventListener("click", openTree);
+  $("tree-close").addEventListener("click", () => {
+    $("tree-dialog").close();
+  });
   $("model-close").addEventListener("click", () => {
     $("model-dialog").close();
   });

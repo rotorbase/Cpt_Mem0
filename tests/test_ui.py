@@ -29,6 +29,9 @@ from cpt_mem0.daemon import (  # noqa: E402
     MemoryService,
 )
 
+#: The source of the package, for the tests that read it.
+SRC = Path(__file__).resolve().parent.parent / "src" / "cpt_mem0"
+
 
 class FakeEngine:
     """An engine that answers without a model."""
@@ -133,11 +136,35 @@ class TestTheUserInterface:
         assert 'id="show-models"' in html
         assert 'id="model-dialog"' in html
 
-    def test_the_topic_buttons_have_a_star(self):
-        """A topic the user works on stays at the front."""
+    def test_the_topics_are_a_grid_of_twenty(self):
+        """All the topics at once, small and short.
+
+        The user wants to see the whole conversation of the store at
+        a glance - not one topic at a time, and not with a star on
+        every field.
+        """
+        html = (UI_DIR / "index.html").read_text(encoding="utf-8")
         script = (UI_DIR / "app.js").read_text(encoding="utf-8")
-        assert "topic-star" in script
-        assert "/settings/favourites" in script
+        assert "/topics?count=20" in script
+        assert "empty-slot" in script
+        assert "topic-star" not in script
+        # The section for the marked topics is gone with the stars.
+        assert 'id="favourites"' not in html
+
+        style = (UI_DIR / "style.css").read_text(encoding="utf-8")
+        assert "grid-template-columns" in style
+        # The field grows under the mouse.
+        assert ".topic:hover" in style
+        assert "scale(1.16)" in style
+
+    def test_the_tree_shows_everything(self):
+        """A window with all the topics and their facts."""
+        script = (UI_DIR / "app.js").read_text(encoding="utf-8")
+        assert "openTree" in script
+        assert "branch-facts" in script
+        html = (UI_DIR / "index.html").read_text(encoding="utf-8")
+        assert 'id="tree-dialog"' in html
+        assert 'id="open-tree"' in html
 
     def test_the_wipe_asks_twice(self):
         """One click must not empty the store.
@@ -717,4 +744,25 @@ class TestTheConfigurationIsNotWrittenByTests:
         path = config_module.save_config(config)
         assert path.is_file()
         assert str(path).startswith(str(tmp_path))
+
+
+class TestTheAppReadsItsConfiguration:
+    """The app must read what the user wrote.
+
+    It ran with the defaults before: no model files, the standard
+    port, the standard store. Everything the user had set - the
+    model, the folder with the models, the voice - was invisible to
+    it, and the window showed a switch that could not switch
+    anything.
+    """
+
+    def test_the_window_loads_the_config(self):
+        source = (SRC / "cli.py").read_text(encoding="utf-8")
+        assert "config = load_config(" in source
+        # The defaults alone are not enough.
+        assert "config = Config()" not in source
+
+    def test_the_config_path_comes_from_the_installer(self):
+        source = (SRC / "config.py").read_text(encoding="utf-8")
+        assert "from .install import config_dir" in source
 

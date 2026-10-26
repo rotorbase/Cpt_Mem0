@@ -499,6 +499,15 @@ class Daemon:
         self._http = _QuietHTTPServer(
             (self.config.server.host, self.config.server.port), handler)
         self._http.daemon_threads = True
+        # **The port it got.** The configuration may say 0, and then
+        # the system picks one - and then nobody knows where the app
+        # is. The backend writes it here, and the window waits for
+        # this file.
+        try:
+            (self.paths.state / "daemon.port").write_text(
+                str(self._http.server_address[1]), encoding="utf-8")
+        except OSError:
+            pass
         self._thread = threading.Thread(
             target=self._http.serve_forever, daemon=True)
         self._thread.start()
@@ -954,7 +963,7 @@ class Daemon:
         except (OSError, subprocess.SubprocessError):
             pass
 
-    def topics(self, count: int = 5, name: bool = True) -> dict[str, Any]:
+    def topics(self, count: int = 20, name: bool = True) -> dict[str, Any]:
         """The topic buttons.
 
         The facts come from the store, the grouping from the vectors
@@ -966,8 +975,11 @@ class Daemon:
         """
         from .topics import cluster, name_clusters, palette
 
-        entries = self.engine.entries(limit=300) if self.engine else []
-        clusters = cluster(entries, k=max(1, min(count, 6)))
+        entries = self.engine.entries(limit=600) if self.engine else []
+        # **Up to twenty topics.** They are all shown at once - the
+        # buttons are small and the user wants to see the whole
+        # conversation of the store at a glance.
+        clusters = cluster(entries, k=max(1, min(count, 20)))
 
         if name and not self.suspended:
             clusters = name_clusters(clusters, llm=self._ask_llm)
@@ -984,7 +996,7 @@ class Daemon:
             return (0 if marked else 1, -cluster.last_seen, -cluster.size)
 
         clusters.sort(key=rank)
-        clusters = clusters[:max(1, min(count, 6))]
+        clusters = clusters[:max(1, min(count, 20))]
 
         colours = palette(len(clusters))
 
@@ -1333,7 +1345,7 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     return
 
                 if path in ("/topics", "/v1/topics"):
-                    count = int(query.get("count", ["5"])[0])
+                    count = int(query.get("count", ["20"])[0])
                     self._send(200, daemon.topics(count=count))
                     return
 
