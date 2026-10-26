@@ -10,8 +10,6 @@ four and a half seconds, on the card two tenths.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 
@@ -140,9 +138,9 @@ class TestTheDaemon:
         assert status["dictation"]["available"] is True
 
     def test_the_window_can_dictate(self, tmp_path, monkeypatch):
+        import cpt_mem0.dictation as dictation
         from cpt_mem0.config import Config
         from cpt_mem0.daemon import Daemon, DaemonPaths
-        import cpt_mem0.dictation as dictation
 
         monkeypatch.setattr(dictation, "available", lambda: True)
         monkeypatch.setattr(dictation, "transcribe_base64",

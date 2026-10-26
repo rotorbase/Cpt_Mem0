@@ -711,12 +711,10 @@ class Daemon:
         if not text:
             return False
 
-        from .voice import Speaker
-
         # **One voice.** The app has one, and it is the neural one.
         # A setting from an older version that names a voice of
         # Windows is ignored - it would only make the app silent.
-        from .voice import DEFAULT_VOICE
+        from .voice import DEFAULT_VOICE, Speaker
 
         name = DEFAULT_VOICE
         if self._speaker is None or self._voice_name != name:
@@ -1216,7 +1214,6 @@ class Daemon:
         neural one is 109 MB, and it is downloaded when the user
         asks for it.
         """
-        from . import piper_voice
         from .voice import voices
 
         # **The voice is part of the program.** There is nothing to

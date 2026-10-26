@@ -82,8 +82,8 @@ class TestTheVoice:
         assert all(entry["name"] == "Piper Thorsten" for entry in found)
 
     def test_the_status_says_that_the_voice_is_missing(self, monkeypatch):
-        import cpt_mem0.voice as voice
         import cpt_mem0.piper_voice as piper_voice
+        import cpt_mem0.voice as voice
 
         monkeypatch.setattr(piper_voice, "available", lambda: True)
         monkeypatch.setattr(piper_voice, "installed", lambda: [])
@@ -92,8 +92,8 @@ class TestTheVoice:
         assert status["reason"]
 
     def test_the_speaker_says_why_it_is_silent(self, monkeypatch):
-        import cpt_mem0.voice as voice
         import cpt_mem0.piper_voice as piper_voice
+        import cpt_mem0.voice as voice
 
         monkeypatch.setattr(piper_voice, "available", lambda: True)
         monkeypatch.setattr(piper_voice, "model_path",
@@ -105,8 +105,8 @@ class TestTheVoice:
     def test_it_speaks_in_the_background(self, monkeypatch, tmp_path):
         """The answer must appear at the same moment the voice
         starts, not when it ends."""
-        import cpt_mem0.voice as voice
         import cpt_mem0.piper_voice as piper_voice
+        import cpt_mem0.voice as voice
 
         spoken = []
 
@@ -138,8 +138,8 @@ class TestTheVoice:
 
     def test_a_failing_voice_does_not_break_the_request(self, monkeypatch,
                                                          tmp_path):
-        import cpt_mem0.voice as voice
         import cpt_mem0.piper_voice as piper_voice
+        import cpt_mem0.voice as voice
 
         class Broken:
             last_error = "kaputt"
@@ -169,7 +169,6 @@ class TestTheDaemon:
 
     def test_nothing_is_spoken_when_the_voice_is_off(self, tmp_path,
                                                        monkeypatch):
-        import cpt_mem0.daemon as daemon
 
         spoken = []
 
@@ -188,7 +187,6 @@ class TestTheDaemon:
         assert spoken == []
 
     def test_it_speaks_when_the_voice_is_on(self, tmp_path, monkeypatch):
-        import cpt_mem0.daemon as daemon
 
         spoken = []
 
@@ -208,7 +206,6 @@ class TestTheDaemon:
 
     def test_the_voice_catalogue_has_the_neural_voice(self, tmp_path,
                                                      monkeypatch):
-        import cpt_mem0.daemon as daemon
         import cpt_mem0.voice as voice
 
         monkeypatch.setattr(

@@ -188,8 +188,8 @@ def _post(address: str, wave: bytes) -> str:
     body = (
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="file"; filename="a.wav"\r\n'
-        f"Content-Type: audio/wav\r\n\r\n").encode("utf-8") + wave + \
-        f"\r\n--{boundary}--\r\n".encode("utf-8")
+        f"Content-Type: audio/wav\r\n\r\n").encode() + wave + \
+        f"\r\n--{boundary}--\r\n".encode()
     request = urllib.request.Request(
         f"{address}/inference", data=body,
         headers={"Content-Type":

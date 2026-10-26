@@ -17,7 +17,6 @@ import threading
 from pathlib import Path
 from typing import Any
 
-
 #: Where the voices are in the package. The build puts them there,
 #: and the app finds them without asking for anything.
 BUNDLE_DIR = "piper_voices"
