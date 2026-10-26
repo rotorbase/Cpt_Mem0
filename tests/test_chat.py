@@ -8,66 +8,11 @@ The tests do not load a model. They use a small HTTP server that
 answers like llama.cpp does, and a stub for the engine.
 """
 
-import json
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from cpt_mem0.daemon import ApiError, MemoryService
 from cpt_mem0.engine import Endpoint, Engine
-
-
-class _Handler(BaseHTTPRequestHandler):
-    """Answers like a llama.cpp server."""
-
-    def log_message(self, *args):
-        pass
-
-    def do_POST(self):  # noqa: N802 - the name is from the base class
-        length = int(self.headers.get("Content-Length") or 0)
-        body = json.loads(self.rfile.read(length) or b"{}")
-        self.server.requests.append(body)
-
-        if self.path.endswith("/chat/completions"):
-            if getattr(self.server, "refuse", False):
-                # **A refusal has to be visible.** The error message
-                # of the model is the only clue the user gets.
-                raw = b'{"error": "the context is too small"}'
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(raw)))
-                self.end_headers()
-                self.wfile.write(raw)
-                return
-            payload = {
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "Du fährst mit dem Rad zur Arbeit.",
-                    },
-                }],
-            }
-        else:
-            payload = {"data": [{"embedding": [0.0] * 768}]}
-
-        raw = json.dumps(payload).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
-
-@pytest.fixture
-def server():
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    httpd.requests = []
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    yield httpd
-    httpd.shutdown()
-    httpd.server_close()
 
 
 class TestTheInference:

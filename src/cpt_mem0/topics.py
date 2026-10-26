@@ -153,9 +153,21 @@ def cluster(entries: list[tuple[str, list[float]]],
             k: int = 5) -> list[Cluster]:
     """Group the facts into topics.
 
-    ``k`` is the wanted number of clusters. There are never more
-    clusters than facts, and a fact that is too far from every centre
-    becomes its own cluster - it does not belong to any topic.
+    ``k`` is the wanted number of clusters - the number of buttons the
+    user wants to see. It is not the number of topics there are.
+
+    **A topic that is split in two is worse than one topic too many.**
+    The user sees a button per topic, and a topic that comes in two
+    halves is the same topic twice. Two things prevent that:
+
+    - With few facts there are not enough for the wanted number of
+      clusters. Five facts and five buttons gave five blocks of one -
+      every fact was a cluster of its own.
+    - Two clusters whose centres are nearly the same are the same
+      topic. They are merged.
+
+    So the number of clusters follows the number of facts, and what
+    comes out is merged when it is one thing.
     """
     if not entries:
         return []
@@ -163,7 +175,18 @@ def cluster(entries: list[tuple[str, list[float]]],
     texts = [text for text, _ in entries]
     vectors = [vector for _, vector in entries]
 
-    assignment, centres = kmeans(vectors, k)
+    # **Fewer facts, fewer topics.** Every cluster wants at least two
+    # members, or every fact is a topic of its own - which is what
+    # happened with four facts and five buttons: four blocks of one
+    # topic.
+    #
+    # The limit is only a limit. What makes a topic one topic is the
+    # merge below: two clusters whose centres are nearly the same
+    # are the same topic, however many the user wanted.
+    count = len(entries)
+    wanted = max(1, min(k, count // 2 if count >= 2 else 1))
+
+    assignment, centres = kmeans(vectors, wanted)
 
     clusters: list[Cluster] = []
     for centre_index in range(len(centres)):
@@ -179,10 +202,60 @@ def cluster(entries: list[tuple[str, list[float]]],
             spread=_spread(vectors, centres[centre_index], members),
         ))
 
+    # **The clusters whose centres are nearly the same are the same
+    # topic.** Two halves of one topic are the one topic twice, and
+    # the user sees two buttons for it. The centres are compared, and
+    # the members of the second one go to the first.
+    clusters = _merge_similar(clusters, vectors, centres, assignment)
+
     # The biggest cluster first: the UI shows the most used topic at
     # the left.
     clusters.sort(key=lambda cluster: (-cluster.size, cluster.label))
     return clusters
+
+
+#: Two centres closer than this are the same topic.
+MERGE_SIMILARITY = 0.92
+
+
+def _merge_similar(clusters: list[Cluster], vectors: list[list[float]],
+                   centres: list[list[float]],
+                   assignment: list[int]) -> list[Cluster]:
+    """Merge the clusters that are one topic.
+
+    The clusters are compared by their centres. When two centres are
+    nearly the same, the topics are nearly the same - and the facts
+    of the smaller one go to the bigger one.
+    """
+    if len(clusters) < 2:
+        return clusters
+
+    merged: list[Cluster] = []
+    used: set[int] = set()
+
+    for index, cluster in enumerate(clusters):
+        if index in used:
+            continue
+        facts = list(cluster.facts)
+        members = [position for position, group in enumerate(assignment)
+                   if group == index]
+        for other in range(index + 1, len(clusters)):
+            if other in used:
+                continue
+            if _dot(centres[index], centres[other]) >= MERGE_SIMILARITY:
+                facts.extend(clusters[other].facts)
+                members.extend(position for position, group
+                               in enumerate(assignment) if group == other)
+                used.add(other)
+        used.add(index)
+        merged.append(Cluster(
+            label=facts[0],
+            facts=facts,
+            size=len(facts),
+            spread=_spread(vectors, centres[index], members),
+        ))
+
+    return merged
 
 
 def name_clusters(clusters: list[Cluster], llm=None) -> list[Cluster]:

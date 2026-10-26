@@ -129,7 +129,8 @@ class MemoryService:
             "results": _results_of(result),
         }
 
-    def chat(self, text: str, user_id: str | None = None) -> dict[str, Any]:
+    def chat(self, text: str, user_id: str | None = None,
+             history: list[dict[str, str]] | None = None) -> dict[str, Any]:
         """Answer the user and remember the conversation.
 
         **This is the whole thing.** The model answers - that is the
@@ -152,7 +153,10 @@ class MemoryService:
         memories = [str(item.get("memory") or "") for item in known]
         memories = [item for item in memories if item]
 
-        answer = self.engine.ask(text, memories)
+        # **The thread goes with it.** The model sees the last turns,
+        # so the second question of a conversation can refer to the
+        # first answer.
+        answer = self.engine.ask(text, memories, history=history)
 
         # **The communication goes into the store.** Both sides: what
         # the user said and what came back.
@@ -1191,7 +1195,10 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     text = str(body.get("text") or body.get("content")
                                or body.get("message") or "")
                     user = body.get("user_id")
-                    result = service.chat(text, user)
+                    history = body.get("history")
+                    if not isinstance(history, list):
+                        history = []
+                    result = service.chat(text, user, history)
                     from .voice import summarise
 
                     daemon.speak(summarise(result.get("results", [])))
@@ -1334,7 +1341,8 @@ def mcp_tools(service: MemoryService) -> list[dict[str, Any]]:
                 "required": ["text"],
             },
             "handler": lambda args: service.chat(
-                str(args.get("text") or "")),
+                str(args.get("text") or ""),
+                history=args.get("history")),
         },
         {
             "name": "remember",

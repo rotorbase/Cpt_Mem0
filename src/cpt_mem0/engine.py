@@ -175,6 +175,10 @@ Rules:
 - Keep the wording of the user as close as you can.
 - Never invent anything. Only what was said.
 - Do not store small talk, greetings or questions.
+- **The facts are about the user.** Do not store what the assistant
+  said, do not store the answer, and do not store the question. A
+  fact is something about the person: their situation, their work,
+  their preferences, their plans.
 - If the conversation really contains nothing durable, return an
   empty list.
 - Answer with JSON only, in this form:
@@ -185,14 +189,29 @@ Rules:
 #: The model is not only there to extract facts - it is the one that
 #: answers. It gets the memories of the user, and it answers in the
 #: language of the user.
-CHAT_SYSTEM_PROMPT = """You are the memory of this person. You answer
-in the same language the person writes in.
+CHAT_SYSTEM_PROMPT = """You are a helpful assistant with a memory.
 
-What you know about them is listed below. Use it. If they ask about
-something that is not in the list, say that you do not know it. Never
-invent facts about them.
+The user writes in German, English or another language - answer in the
+language they use.
 
-Keep the answers short. Two or three sentences are usually enough."""
+**You are a general assistant.** You answer general questions, you
+explain things, you help with work, code and text. Your own knowledge
+is the main thing you answer from.
+
+**The memories below are what you know about this person from earlier
+conversations.** They are an addition, not a filter:
+
+- If a memory fits the question, use it.
+- If the memories say nothing about the question, answer normally out
+  of your own knowledge. Do not refuse a question because the list does
+  not mention it, and do not answer only about the list.
+- If a memory contradicts the question, say so.
+
+Everything under "What you know about this person" is true. Nothing
+else about them is - never invent facts about the person.
+
+Keep the answers short: two or three sentences, unless the question
+needs more."""
 
 
 
@@ -337,7 +356,8 @@ class Engine:
 
     def ask(self, text: str,
             memories: list[str] | None = None,
-            max_tokens: int = 600,
+            history: list[dict[str, str]] | None = None,
+            max_tokens: int = 800,
             temperature: float = 0.7) -> str:
         """Ask the model and get an answer.
 
@@ -357,12 +377,24 @@ class Engine:
             lines = "\n".join(f"- {item}" for item in memories)
             system += (f"\n\nWhat you know about this person:\n{lines}")
 
+        # **The conversation comes first.** Without the history every
+        # question stands alone, and a chat where every question
+        # stands alone is not a chat. The window sends the last turns
+        # along, and the model sees the thread.
+        messages: list[dict[str, str]] = [{"role": "system", "content": system}]
+        for turn in (history or [])[-12:]:
+            role = str(turn.get("role") or "user")
+            content = str(turn.get("content") or "")
+            if not content:
+                continue
+            if role not in ("user", "assistant"):
+                role = "user"
+            messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": text})
+
         payload = json.dumps({
             "model": endpoint.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": text},
-            ],
+            "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": False,

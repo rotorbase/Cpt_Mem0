@@ -6,7 +6,7 @@ behind an explicit call; the planner is pure arithmetic over measured
 constants.
 """
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 
 import os as _os
 

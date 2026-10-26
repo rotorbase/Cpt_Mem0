@@ -17,6 +17,9 @@ const state = {
   appVram: 0,
   loading: false,
   waiting: "",
+  // **The thread.** The model needs to see the last turns, otherwise
+  // every question stands alone and it is not a conversation.
+  history: [],
   suspended: false,
   activeTopic: null,
   clusters: [],
@@ -308,11 +311,20 @@ async function send(text) {
     // exchange goes into the memory.
     const result = await api("/chat", {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, history: state.history }),
     });
 
     waiting.remove();
-    say(result.answer || "Keine Antwort.", "assistant");
+    const answer = result.answer || "Keine Antwort.";
+    say(answer, "assistant");
+
+    // **The thread grows with the conversation.** Only the last turns
+    // are kept - the model gets a window, not the whole life.
+    state.history.push({ role: "user", content: text });
+    state.history.push({ role: "assistant", content: answer });
+    if (state.history.length > 12) {
+      state.history = state.history.slice(-12);
+    }
 
     const facts = result.results || [];
     if (facts.length) {

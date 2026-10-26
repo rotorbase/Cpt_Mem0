@@ -58,3 +58,53 @@ def candidate(catalogue):
     assert result.viable is True
     assert result.candidate is not None
     return result.candidate
+
+
+#: A small HTTP server that answers like llama.cpp does.
+#:
+#: The tests of the inference need a server that answers the OpenAI
+#: endpoints - and they must not load a model, because the VRAM of
+#: the machine belongs to whoever is working on it.
+@pytest.fixture
+def server():
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class _Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):  # noqa: N802 - the name is from the base class
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length) or b"{}")
+            self.server.requests.append(body)
+
+            if self.path.endswith("/chat/completions"):
+                if getattr(self.server, "refuse", False):
+                    raw = b'{"error": "the context is too small"}'
+                    self.send_response(500)
+                else:
+                    raw = json.dumps({"choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": "Du f\u00e4hrst mit dem Rad zur Arbeit.",
+                        },
+                    }]}).encode()
+            else:
+                raw = json.dumps(
+                    {"data": [{"embedding": [0.0] * 768}]}).encode()
+
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    httpd.requests = []
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield httpd
+    httpd.shutdown()
+    httpd.server_close()
