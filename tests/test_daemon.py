@@ -6,6 +6,7 @@ with a fake mem0.
 """
 
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -864,3 +865,67 @@ class TestTheApiRoutes:
                  for tool in mcp_tools(MemoryService(engine))}
         assert {"remember", "recall", "memory_list", "memory_update",
                 "memory_delete"} <= names
+
+
+class TestTheModelReachesTheConfiguration:
+    """The choice of the model has to outlive the window.
+
+    The model and the folder went into the settings of the window -
+    and the window is not what starts the model. The configuration
+    is. So the choice was made, shown, and then gone.
+    """
+
+    @pytest.fixture
+    def daemon(self, tmp_path, monkeypatch):
+        # **The configuration of the test, never the one of the
+        # user.** The test writes a configuration, and it must not be
+        # the one the app uses.
+        appdata = tmp_path / "appdata"
+        (appdata / "cpt-mem0").mkdir(parents=True)
+        monkeypatch.setenv("APPDATA", str(appdata))
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+
+        config = Config()
+        config.server.port = 0
+        config.store.path = tmp_path / "store"
+        daemon = Daemon(config, DaemonPaths(logs=tmp_path / "logs",
+                                           state=tmp_path / "state"))
+        daemon.service = MemoryService(_engine_with_fake(tmp_path))
+        return daemon
+
+    def test_the_folder_is_written_to_the_configuration(self, daemon,
+                                                        tmp_path):
+        result = daemon.set_setting("model-folder", str(tmp_path))
+        assert result["ok"] is True
+
+        from cpt_mem0.config import load_config
+        config = load_config()
+        assert config.llm.model_folder is not None
+        assert str(config.llm.model_folder) == str(tmp_path)
+
+    def test_the_model_is_found_in_the_folder(self, daemon, tmp_path):
+        model = tmp_path / "Qwen3-8B-Q4_K_M.gguf"
+        model.write_bytes(b"not a real model, only the name matters")
+        daemon.set_setting("model-folder", str(tmp_path))
+
+        # **The file is found in the folder of the user.**
+        found = daemon._find_model_file("Qwen3-8B")
+        assert found is not None
+        assert found.name == "Qwen3-8B-Q4_K_M.gguf"
+
+        # **And the choice is saved.**
+        result = daemon.set_setting("model", "Qwen3-8B")
+        assert result["ok"] is True
+        assert result["model_file"] is not None
+
+        from cpt_mem0.config import load_config
+        config = load_config()
+        assert config.llm.model_file is not None
+
+    def test_the_user_configuration_is_not_touched(self, daemon, tmp_path):
+        """The test writes into its own directory."""
+        daemon.set_setting("model-folder", str(tmp_path))
+        real = Path(os.path.expanduser(r"~\AppData\Roaming\cpt-mem0"
+                                       r"\config.yaml"))
+        if real.is_file():
+            assert "model_folder" not in real.read_text(encoding="utf-8")

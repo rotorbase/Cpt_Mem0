@@ -150,5 +150,35 @@ class TestPalette:
         """Two buttons next to each other must not have the same
         colour."""
         colours = palette(6)
-        hues = [int(colour.split("(")[1].split()[0]) for colour in colours]
+        hues = [int(colour.split("(")[1].split(",")[0])
+                for colour in colours]
         assert sorted(hues) == [0, 60, 120, 180, 240, 300]
+
+
+class TestTheNameFitsOnTheButton:
+    """A fact is a sentence. A sentence does not fit on a button.
+
+    The name of a topic comes from the model - and without a model
+    from the first fact of the group. Both have to be short.
+    """
+
+    def test_the_name_is_cut_to_three_words(self):
+        from cpt_mem0.topics import shorten
+        assert shorten("User enjoys riding a bicycle very much.") == \
+            "User enjoys riding…"
+        assert shorten("Märchen") == "Märchen"
+        assert shorten("") == ""
+
+    def test_the_group_without_a_model_has_a_short_name(self):
+        from cpt_mem0.topics import cluster
+        entries = [
+            ("User enjoys riding a bicycle very much.", [1.0, 0.0]),
+            ("The user loves parsley as a favorite herb or ingredient.",
+             [0.0, 1.0]),
+        ]
+        groups = cluster(entries, k=5)
+        assert groups
+        for group in groups:
+            assert len(group.label) <= 24
+            assert "…" in group.label
+

@@ -42,9 +42,18 @@ class Cluster:
     #: user works on are the ones that were talked about recently.
     last_seen: float = 0.0
 
+    #: The colour of the button. **It belongs to the topic** - the
+    #: placeholders in the row would otherwise shift the colours of
+    #: the topics that follow them.
+    colour: str = ""
+    #: The same colour, transparent - the face of the key.
+    fill: str = ""
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "label": self.label,
+            "colour": self.colour,
+            "fill": self.fill,
             "facts": self.facts,
             "size": self.size,
             "spread": round(self.spread, 4),
@@ -294,7 +303,9 @@ def _merge_similar(clusters: list[Cluster], vectors: list[list[float]],
                 used.add(other)
         used.add(index)
         merged.append(Cluster(
-            label=facts[0],
+            # **A name that fits on the button.** A fact is a
+            # sentence, and a sentence does not fit on a button.
+            label=shorten(facts[0]),
             facts=facts,
             size=len(facts),
             spread=_spread(vectors, centres[index], members),
@@ -348,17 +359,45 @@ def name_clusters(clusters: list[Cluster], llm=None) -> list[Cluster]:
     return clusters
 
 
+#: How many topics shine. The others are there, but quiet - like
+#: the keys of a keyboard that are not being played.
+LIT_TOPICS = 6
+
+
 def palette(count: int) -> list[str]:
     """The colours for the topic buttons.
 
-    They are spread over the hue circle and keep a similar lightness,
-    so no button is brighter than the others - the colour says which
-    topic it is, not which one is more important.
+    **Like a keyboard of a synthesizer.** The colours are neon - the
+    keys glow - and the six that are being played right now shine
+    full, the rest glow quiet. The colour says which topic it is,
+    the brightness says how strong it is.
     """
     if count <= 0:
         return []
     colours = []
     for index in range(count):
         hue = int(round(index * 360 / count))
-        colours.append(f"hsl({hue} 72% 58%)")
+        if index < LIT_TOPICS:
+            colours.append(f"hsl({hue}, 95%, 62%)")
+        else:
+            colours.append(f"hsl({hue}, 60%, 38%)")
     return colours
+
+
+def fills(count: int) -> list[str]:
+    """The colour of the button, transparent.
+
+    **The old syntax, with the comma.** The window runs on an
+    Electron that does not know the new one - and a colour that the
+    browser does not understand is no colour at all.
+    """
+    if count <= 0:
+        return []
+    result = []
+    for index in range(count):
+        hue = int(round(index * 360 / count))
+        if index < LIT_TOPICS:
+            result.append(f"hsla({hue}, 95%, 62%, 0.16)")
+        else:
+            result.append(f"hsla({hue}, 60%, 38%, 0.10)")
+    return result

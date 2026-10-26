@@ -96,13 +96,15 @@ function renderTopics(clusters, colours) {
   // the whole conversation of the store at a glance - the fields
   // that are not filled yet are placeholders, so the row does not
   // jump when a new topic appears, and the empty store looks the
-  // same as a full one.
-  const wanted = Math.max(20, clusters.length);
+  // same as a full one. The topics come first - the placeholders
+  // fill the rest.
+  const wanted = Math.max(18, clusters.length);
+  const placeholders = document.createDocumentFragment();
   for (let empty = clusters.length; empty < wanted; empty++) {
     const slot = document.createElement("div");
     slot.className = "topic empty-slot";
     slot.title = "Noch kein Thema";
-    container.appendChild(slot);
+    placeholders.appendChild(slot);
   }
 
   if (!clusters.length) {
@@ -112,13 +114,27 @@ function renderTopics(clusters, colours) {
     container.appendChild(note);
   }
 
+  // **The six that are being played shine, the rest glow quiet.**
+  // The topics come in the order of their strength, so the first
+  // six are the ones that matter right now.
   clusters.forEach((cluster, index) => {
     const button = document.createElement("button");
     button.className = "topic";
     if (cluster.label === state.activeTopic) {
       button.classList.add("active");
     }
-    button.style.setProperty("--topic", colours[index] || "#2a2e36");
+    button.style.setProperty("--topic",
+      cluster.colour || colours[index] || "#2a2e36");
+    button.style.setProperty("--topic-fill",
+      cluster.fill || "transparent");
+    // **The six that are being played shine full, the rest glow
+    // quiet.** Like the keys of a synthesizer: the ones that are
+    // active are lit, the others are there but dark.
+    const lit = index < 6;
+    button.style.setProperty("--topic-glow",
+      lit ? "0 0 14px var(--topic), 0 0 34px var(--topic)"
+          : "0 0 6px var(--topic)");
+    button.classList.toggle("lit", lit);
 
     const label = document.createElement("span");
     label.className = "topic-label";
@@ -139,6 +155,11 @@ function renderTopics(clusters, colours) {
 
     container.appendChild(button);
   });
+
+  // **The placeholders fill the rest of the row.** The topics come
+  // first - the ones that are being played are the ones at the top
+  // left, like the keys under the fingers.
+  container.appendChild(placeholders);
 }
 
 /* ------------------------------------------------------------------ */
@@ -250,7 +271,14 @@ function renderCockpit(runtime) {
   const percent = runtime.gpu_percent;
   $("gpu-percent").textContent =
     percent === null || percent === undefined ? "–" : `${percent}%`;
-  $("gpu-name").textContent = runtime.gpu_name || "GPU";
+  // **The short name of the card.** "NVIDIA GEFORCE RTX 3060" does
+  // not fit into a dial, and the panel has to stay inside the
+  // window.
+  const card = String(runtime.gpu_name || "GPU");
+  $("gpu-name").textContent = card
+    .replace(/NVIDIA\s*/gi, "")
+    .replace(/GeForce\s*/gi, "")
+    .trim() || "GPU";
 
   const used = runtime.gpu_used_mib;
   const free = runtime.gpu_free_mib;
@@ -332,7 +360,7 @@ async function openTree() {
   if (!dialog) return;
 
   try {
-    const data = await api("/topics?count=20");
+    const data = await api("/topics?count=18");
     const clusters = data.clusters || [];
     hint.textContent = `${clusters.length} Themen · ${data.facts || 0} Fakten`;
     tree.innerHTML = "";
@@ -515,6 +543,24 @@ async function refreshModels() {
       option.disabled = !model.fits;
       select.appendChild(option);
     }
+    // **The model that is chosen is the one that is shown.** The
+    // list is sorted by what fits, and the chosen one can be
+    // anywhere in it.
+    try {
+      const settings = await api("/settings");
+      const chosen = settings.model;
+      if (chosen) {
+        for (const option of select.options) {
+          if (option.value === chosen) {
+            select.value = chosen;
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      // The list is shown anyway.
+    }
+
     const fitting = (data.models || []).filter((m) => m.fits);
     if (data.reason) {
       // No GPU - the window has to say that, not show an empty list.
@@ -672,15 +718,6 @@ async function start() {
     const text = input.value;
     input.value = "";
     await send(text);
-  });
-
-  bindToggle("autostart", async (next) => {
-    // The daemon owns the autostart. It writes the task on Windows.
-    await api("/settings/autostart", {
-      method: "POST",
-      body: JSON.stringify({ enabled: next }),
-    });
-    status(next ? "Autostart eingeschaltet." : "Autostart aus.");
   });
 
   bindToggle("voice", async (next) => {

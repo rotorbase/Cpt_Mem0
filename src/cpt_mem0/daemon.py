@@ -781,20 +781,32 @@ class Daemon:
         }
 
     def settings(self) -> dict[str, Any]:
-        """The settings of the window."""
+        """The settings of the window - and the model that is in use.
+
+        **The model comes from the configuration** when the window
+        has not chosen one. The planner picks the model that fits
+        the card, and the window has to show that one - not the first
+        of the list.
+        """
         return {
             "autostart": self.settings_data.get("autostart", False),
             "voice": self.settings_data.get("voice", False),
             "winamp": self.settings_data.get("winamp", True),
             #: Which interface the window shows.
             "theme": self.settings_data.get("theme", "plain"),
-            "model": self.settings_data.get("model"),
+            # **The model that is in use.** The window has not always
+            # chosen one - then the planner has, and the window has
+            # to show that one.
+            "model": (self.settings_data.get("model")
+                      or self.config.llm.model),
             #: The topics the user marked. They are the first fact of
             #: the cluster, not its name - the name comes from the
             #: model and the model may name it differently tomorrow.
             "favourites": list(self.settings_data.get("favourites", [])),
             #: Where the user keeps the models.
-            "model_folder": self.settings_data.get("model_folder", ""),
+            "model_folder": (self.settings_data.get("model_folder")
+                             or (str(self.config.llm.model_folder)
+                                 if self.config.llm.model_folder else "")),
         }
 
     def toggle_favourite(self, fact: str) -> list[str]:
@@ -819,6 +831,69 @@ class Daemon:
         self._save_settings()
         return favourites
 
+    def _set_model(self, name: str, value: Any) -> dict[str, Any]:
+        """The model and the folder with the models.
+
+        **The configuration is written here.** The window shows what
+        is set - and the configuration is what the server reads when
+        it starts the model. Without this the choice was lost on
+        every start.
+        """
+        from .config import save_config
+
+        if name == "model":
+            model_id = str(value or "")
+            self.settings_data["model"] = model_id or None
+            if model_id:
+                path = self._find_model_file(model_id)
+                if path is not None:
+                    self.config.llm.model_file = path
+        else:
+            folder = str(value or "")
+            self.settings_data["model_folder"] = folder
+            if folder:
+                self.config.llm.model_folder = Path(folder)
+            else:
+                self.config.llm.model_folder = None
+
+        save_config(self.config)
+        self._save_settings()
+
+        # **The new configuration is used right away.** The user
+        # should not have to start the app again to see the effect.
+        try:
+            self._autoconfigure()
+        except Exception as error:  # noqa: BLE001
+            return {"ok": False, "error": str(error)}
+
+        return {"ok": True,
+                "model": self.settings_data.get("model"),
+                "model_folder": self.settings_data.get("model_folder"),
+                "model_file": (str(self.config.llm.model_file)
+                               if self.config.llm.model_file else None)}
+
+    def _find_model_file(self, model_id: str) -> Path | None:
+        """The file of a model in the folder of the user.
+
+        The name of the model is the name of the catalogue; the file
+        on the disk has a quantisation in it. The best file that fits
+        is the one that is there.
+        """
+        folder = self.config.llm.model_folder
+        if folder is None or not folder.is_dir():
+            return None
+        wanted = model_id.lower().replace("-", "")
+        best: tuple[int, Path] | None = None
+        for path in sorted(folder.glob("*.gguf")):
+            name = path.stem.lower().replace("-", "").replace("_", "")
+            if wanted not in name:
+                continue
+            # The smaller quantisation first - it fits more often.
+            size = path.stat().st_size
+            if best is None or size < best[0]:
+                best = (size, path)
+        return best[1] if best else None
+
     def set_setting(self, name: str, value: Any) -> dict[str, Any]:
         """Change one setting.
 
@@ -827,22 +902,28 @@ class Daemon:
         never done without being asked for.
         """
         if name not in ("autostart", "voice", "winamp", "model", "theme",
-                        "favourites", "voice_name", "model_folder"):
+                        "favourites", "voice_name", "voice-name",
+                        "model_folder", "model-folder"):
             raise ApiError(f"unknown setting: {name}")
 
         if name == "autostart":
             self.settings_data["autostart"] = bool(value)
             self._apply_autostart(bool(value))
-        elif name == "model":
-            self.settings_data["model"] = str(value) if value else None
-        elif name == "model_folder":
-            # **Where the models are.** The user decides - the app
-            # only looks there.
-            self.settings_data["model_folder"] = str(value or "")
-            self._save_settings()
-            return {"ok": True,
-                    "model_folder": self.settings_data["model_folder"]}
-        elif name == "voice_name":
+        elif name == "voice":
+            self.settings_data["voice"] = bool(value)
+            if bool(value):
+                # **A sound, right now.** The user switches the voice
+                # on to hear the voice - and if it stays silent, the
+                # switch is broken.
+                self.speak("Sprachausgabe aktiv.")
+        elif name in ("model", "model-folder", "model_folder"):
+            # **The model and the folder go into the configuration.**
+            # They used to go into the settings of the window, and
+            # the window is not what starts the model - the
+            # configuration is. So the choice was made, shown, and
+            # then gone on the next start.
+            return self._set_model(name, value)
+        elif name in ("voice_name", "voice-name"):
             # **Which voice speaks.** The names come from Windows.
             self.settings_data["voice_name"] = str(value) if value else ""
             self._save_settings()
@@ -963,7 +1044,22 @@ class Daemon:
         except (OSError, subprocess.SubprocessError):
             pass
 
-    def topics(self, count: int = 20, name: bool = True) -> dict[str, Any]:
+    def answer(self, text: str, user_id: str | None = None,
+               history: list[dict[str, str]] | None = None) -> dict[str, Any]:
+        """The answer of the assistant - and the sound of it.
+
+        **The speaking belongs here.** The service knows the models
+        and the store, but not the switches of the window - and the
+        switch for the voice is one of them.
+        """
+        result = self.service.chat(text, user_id, history=history)
+        # **The answer is spoken, not the summary of the facts.** The
+        # user asked a question and got an answer - the voice says
+        # the answer.
+        self.speak(str(result.get("answer") or ""))
+        return result
+
+    def topics(self, count: int = 18, name: bool = True) -> dict[str, Any]:
         """The topic buttons.
 
         The facts come from the store, the grouping from the vectors
@@ -973,13 +1069,13 @@ class Daemon:
         needs no model - but the names fall back to the first fact of
         the cluster.
         """
-        from .topics import cluster, name_clusters, palette
+        from .topics import cluster, fills, name_clusters, palette
 
         entries = self.engine.entries(limit=600) if self.engine else []
         # **Up to twenty topics.** They are all shown at once - the
         # buttons are small and the user wants to see the whole
         # conversation of the store at a glance.
-        clusters = cluster(entries, k=max(1, min(count, 20)))
+        clusters = cluster(entries, k=max(1, min(count, 18)))
 
         if name and not self.suspended:
             clusters = name_clusters(clusters, llm=self._ask_llm)
@@ -996,9 +1092,16 @@ class Daemon:
             return (0 if marked else 1, -cluster.last_seen, -cluster.size)
 
         clusters.sort(key=rank)
-        clusters = clusters[:max(1, min(count, 20))]
+        clusters = clusters[:max(1, min(count, 18))]
 
         colours = palette(len(clusters))
+        backgrounds = fills(len(clusters))
+        # **The colour goes with the topic.** The buttons are in a
+        # row with placeholders, and an index would give the third
+        # topic the colour of the third placeholder.
+        for index, entry in enumerate(clusters):
+            entry.colour = colours[index]
+            entry.fill = backgrounds[index]
 
         return {
             "clusters": [entry.to_dict() for entry in clusters],
@@ -1345,7 +1448,7 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     return
 
                 if path in ("/topics", "/v1/topics"):
-                    count = int(query.get("count", ["20"])[0])
+                    count = int(query.get("count", ["18"])[0])
                     self._send(200, daemon.topics(count=count))
                     return
 
@@ -1414,10 +1517,10 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     history = body.get("history")
                     if not isinstance(history, list):
                         history = []
-                    result = service.chat(text, user, history)
-                    from .voice import summarise
-
-                    daemon.speak(summarise(result.get("results", [])))
+                    # **The daemon answers, not the service.** The
+                    # daemon knows the switches of the window - and
+                    # the voice is one of them.
+                    result = daemon.answer(text, user, history)
                     self._send(200, result)
                     return
 

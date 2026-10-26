@@ -67,6 +67,9 @@ class LlmConfig:
     model: str | None = None
     quantisation: str | None = None
     model_file: Path | None = None
+    #: **Where the user keeps the models.** The app looks here and
+    #: nowhere else - the user decides where the files are.
+    model_folder: Path | None = None
     context: int | None = None
     parallel: int = 2
     kv_cache_type: str = "q8_0"
@@ -471,6 +474,8 @@ def config_from_dict(raw: dict[str, Any]) -> Config:
             "quantisation")
         if llm.get("model_file"):
             config.llm.model_file = Path(str(llm["model_file"]))
+        if llm.get("model_folder"):
+            config.llm.model_folder = Path(str(llm["model_folder"]))
         config.llm.context = llm.get("context")
         if "parallel" in llm:
             config.llm.parallel = int(llm["parallel"])
@@ -561,6 +566,8 @@ def to_dict(config: Config) -> dict[str, Any]:
             "quantization": config.llm.quantisation,
             "model_file": str(config.llm.model_file)
             if config.llm.model_file else None,
+            "model_folder": str(config.llm.model_folder)
+            if config.llm.model_folder else None,
             "context": config.llm.context,
             "parallel": config.llm.parallel,
             "kv_cache_type": config.llm.kv_cache_type,

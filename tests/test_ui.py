@@ -123,7 +123,7 @@ class TestTheUserInterface:
 
     def test_the_index_has_the_settings(self):
         html = (UI_DIR / "index.html").read_text(encoding="utf-8")
-        for control in ("model", "autostart", "voice"):
+        for control in ("model", "voice"):
             assert f'id="{control}"' in html
         # **One interface.** The pictures of the other three were
         # tried and the plain one stayed.
@@ -765,4 +765,23 @@ class TestTheAppReadsItsConfiguration:
     def test_the_config_path_comes_from_the_installer(self):
         source = (SRC / "config.py").read_text(encoding="utf-8")
         assert "from .install import config_dir" in source
+
+
+class TestTheWindowHasNoAutostart:
+    """The autostart is gone from the window.
+
+    The user asked for it: the switch was in the way, and the voice
+    belongs where it was.
+    """
+
+    def test_the_autostart_is_not_in_the_window(self):
+        html = (UI_DIR / "index.html").read_text(encoding="utf-8")
+        assert "autostart" not in html.lower()
+        script = (UI_DIR / "app.js").read_text(encoding="utf-8")
+        assert 'bindToggle("autostart"' not in script
+
+    def test_the_voice_is_where_the_autostart_was(self):
+        html = (UI_DIR / "index.html").read_text(encoding="utf-8")
+        assert 'id="voice"' in html
+        assert "Sprachausgabe" in html
 

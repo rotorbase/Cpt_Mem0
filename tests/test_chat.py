@@ -128,3 +128,44 @@ class TestTheChat:
         service.chat("Hallo")
 
         assert engine.asked and engine.stored
+
+
+class TestTheVoice:
+    """The switch has to lead to a sound.
+
+    The switch was set, the voice was found, and nothing was said:
+    the chat spoke the summary of the extracted facts instead of the
+    answer - and the user heard nothing that he had asked for.
+    """
+
+    @pytest.fixture
+    def daemon(self):
+        from cpt_mem0.daemon import Daemon
+
+        class _Service:
+            def chat(self, text, user_id=None, history=None):
+                return {"ok": True, "answer": "Ich bin dein Assistent.",
+                        "stored": 0, "results": [], "used_memories": 0}
+
+        daemon = Daemon.__new__(Daemon)
+        daemon.settings_data = {"voice": True, "voice_name": ""}
+        daemon.service = _Service()
+        daemon._speaker = None
+        daemon._voice_name = ""
+        return daemon
+
+    def test_the_answer_is_spoken(self, daemon, monkeypatch):
+        spoken = []
+        monkeypatch.setattr(daemon, "speak",
+                            lambda text: spoken.append(text) or True)
+        daemon.answer("Wie heisst du?")
+        assert spoken == ["Ich bin dein Assistent."]
+
+    def test_the_silence_when_the_switch_is_off(self, daemon):
+        """The switch is off - nothing is said.
+
+        The check comes before the speaker, so no voice is even
+        started.
+        """
+        daemon.settings_data["voice"] = False
+        assert daemon.speak("Hallo") is False
