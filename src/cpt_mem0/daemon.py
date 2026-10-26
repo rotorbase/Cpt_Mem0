@@ -674,8 +674,36 @@ class Daemon:
             "autostart": self.settings_data.get("autostart", False),
             "voice": self.settings_data.get("voice", False),
             "winamp": self.settings_data.get("winamp", True),
+            #: Which interface the window shows.
+            "theme": self.settings_data.get("theme", "plain"),
             "model": self.settings_data.get("model"),
+            #: The topics the user marked. They are the first fact of
+            #: the cluster, not its name - the name comes from the
+            #: model and the model may name it differently tomorrow.
+            "favourites": list(self.settings_data.get("favourites", [])),
         }
+
+    def toggle_favourite(self, fact: str) -> list[str]:
+        """Mark a topic as a favourite, or unmark it.
+
+        **A favourite is a topic the user works on.** It stays at the
+        front of the buttons when there are more topics than buttons.
+        It is stored by the first fact of the cluster, not by its
+        name: the name comes from the model, and the model may name
+        the same topic differently tomorrow.
+        """
+        fact = fact.strip()
+        if not fact:
+            return list(self.settings_data.get("favourites", []))
+        favourites = [str(item) for item
+                      in self.settings_data.get("favourites", [])]
+        if fact in favourites:
+            favourites.remove(fact)
+        else:
+            favourites.append(fact)
+        self.settings_data["favourites"] = favourites
+        self._save_settings()
+        return favourites
 
     def set_setting(self, name: str, value: Any) -> dict[str, Any]:
         """Change one setting.
@@ -684,7 +712,8 @@ class Daemon:
         scheduled task that starts the daemon at the logon. It is
         never done without being asked for.
         """
-        if name not in ("autostart", "voice", "winamp", "model"):
+        if name not in ("autostart", "voice", "winamp", "model", "theme",
+                        "favourites"):
             raise ApiError(f"unknown setting: {name}")
 
         if name == "autostart":
@@ -692,6 +721,21 @@ class Daemon:
             self._apply_autostart(bool(value))
         elif name == "model":
             self.settings_data["model"] = str(value) if value else None
+        elif name == "theme":
+            # **A name, not a flag.** There are four interfaces, and
+            # the window says which one it wants.
+            self.settings_data["theme"] = str(value or "plain")
+            self._save_settings()
+            return {"ok": True, "theme": self.settings_data["theme"]}
+        elif name == "favourites":
+            # **A list of topics, not a flag.** The favourite topics
+            # are stored by their first fact, so a topic that the
+            # model names differently tomorrow is still the same one.
+            items = value if isinstance(value, list) else []
+            cleaned = [str(item) for item in items if str(item).strip()]
+            self.settings_data["favourites"] = cleaned
+            self._save_settings()
+            return {"ok": True, "favourites": cleaned}
         else:
             self.settings_data[name] = bool(value)
 
@@ -804,11 +848,25 @@ class Daemon:
         """
         from .topics import cluster, name_clusters, palette
 
-        entries = self.engine.vectors(limit=300) if self.engine else []
+        entries = self.engine.entries(limit=300) if self.engine else []
         clusters = cluster(entries, k=max(1, min(count, 6)))
 
         if name and not self.suspended:
             clusters = name_clusters(clusters, llm=self._ask_llm)
+
+        # **The favourites come first and they stay.** The user marks
+        # the topics they work on. When there are more topics than
+        # buttons, the marked ones are not the ones that get pushed
+        # out.
+        favourites = {str(item) for item
+                      in self.settings_data.get("favourites", [])}
+
+        def rank(cluster: Any) -> tuple:
+            marked = cluster.facts[0] in favourites if cluster.facts else False
+            return (0 if marked else 1, -cluster.last_seen, -cluster.size)
+
+        clusters.sort(key=rank)
+        clusters = clusters[:max(1, min(count, 6))]
 
         colours = palette(len(clusters))
 
@@ -1218,6 +1276,24 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
 
                 if path in ("/settings", "/v1/settings"):
                     self._send(200, daemon.settings())
+                    return
+
+                if path.startswith("/settings/"):
+                    # **Every switch of the window comes through
+                    # here.** Without this route the switches had
+                    # nowhere to go: the window called it, the server
+                    # did not know it, and the switch sprang back.
+                    name = path.rsplit("/", 1)[-1]
+                    value = body.get("value")
+                    if value is None:
+                        value = body.get("enabled")
+                    if name == "favourites" and isinstance(value, bool):
+                        # **A switch, not a list.** The window asks to
+                        # mark one topic or to unmark it.
+                        value = daemon.toggle_favourite(str(
+                            body.get("fact") or ""))
+                    result = daemon.set_setting(name, value)
+                    self._send(200, result)
                     return
 
                 if path in ("/runtime/suspend", "/v1/runtime/suspend"):

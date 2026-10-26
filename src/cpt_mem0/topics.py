@@ -38,6 +38,9 @@ class Cluster:
     #: The mean distance to the centre. A small value means the facts
     #: in the cluster are close to each other.
     spread: float = 0.0
+    #: When the topic was talked about the last time. The topics the
+    #: user works on are the ones that were talked about recently.
+    last_seen: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +48,11 @@ class Cluster:
             "facts": self.facts,
             "size": self.size,
             "spread": round(self.spread, 4),
+            "last_seen": self.last_seen,
+            # **The key of the topic.** The name comes from the model
+            # and the model names it differently tomorrow; the first
+            # fact stays the same. That is what the star is stored on.
+            "fact": self.facts[0] if self.facts else "",
         }
 
 
@@ -153,6 +161,10 @@ def cluster(entries: list[tuple[str, list[float]]],
             k: int = 5) -> list[Cluster]:
     """Group the facts into topics.
 
+    The entries are ``(text, vector)`` or ``(text, vector, when)``.
+    """
+    """Group the facts into topics.
+
     ``k`` is the wanted number of clusters - the number of buttons the
     user wants to see. It is not the number of topics there are.
 
@@ -172,8 +184,9 @@ def cluster(entries: list[tuple[str, list[float]]],
     if not entries:
         return []
 
-    texts = [text for text, _ in entries]
-    vectors = [vector for _, vector in entries]
+    texts = [entry[0] for entry in entries]
+    vectors = [entry[1] for entry in entries]
+    stamps = [entry[2] if len(entry) > 2 else 0.0 for entry in entries]
 
     # **Fewer facts, fewer topics.** Every cluster wants at least two
     # members, or every fact is a topic of its own - which is what
@@ -208,9 +221,17 @@ def cluster(entries: list[tuple[str, list[float]]],
     # the members of the second one go to the first.
     clusters = _merge_similar(clusters, vectors, centres, assignment)
 
-    # The biggest cluster first: the UI shows the most used topic at
-    # the left.
-    clusters.sort(key=lambda cluster: (-cluster.size, cluster.label))
+    # **When the topic was talked about.** The buttons show the topics
+    # the user works on now, not the ones with the most facts. The
+    # newest fact of a cluster decides when the topic was last alive.
+    for cluster in clusters:
+        cluster.last_seen = max(
+            (stamps[index] for index, text in enumerate(texts)
+             if text in cluster.facts), default=0.0)
+
+    # The newest topic first.
+    clusters.sort(key=lambda cluster: (-cluster.last_seen, -cluster.size,
+                                      cluster.label))
     return clusters
 
 
@@ -275,9 +296,16 @@ def name_clusters(clusters: list[Cluster], llm=None) -> list[Cluster]:
     for cluster in clusters:
         facts = "\n".join(f"- {fact}" for fact in cluster.facts[:8])
         prompt = (
-            "These facts belong to one topic. Give the topic a name of "
-            "two or three words, in English, in the same language as "
-            "the facts. Answer with the name only, nothing else.\n\n"
+            "These facts belong to one topic. Name the topic in two or "
+            "three words, **in German**. The facts themselves may be in "
+            "any language - the name is what the user reads on a "
+            "button, and the interface is German.\n\n"
+            "**Name the subject, not the category.** If the facts are "
+            "about fairy tales, the name is the subject - \"Märchen\" or "
+            "\"fairy tales\" - and not the category \"preferences\" or "
+            "\"hobbies\". The button is a topic the user recognises, not "
+            "a label for a kind of fact.\n\n"
+            "Answer with the name only, nothing else.\n\n"
             f"{facts}"
         )
         try:

@@ -63,6 +63,14 @@ class FakeEngine:
     def vectors(self, limit=200):
         return [("A fact.", [1.0, 0.0, 0.0])]
 
+    def entries(self, limit=300):
+        """The memories with their vectors and when they were touched.
+
+        The topic buttons need the time: the topics that were talked
+        about come first.
+        """
+        return [("A fact.", [1.0, 0.0, 0.0], 1000.0)]
+
     def count(self):
         return 1
 
@@ -112,8 +120,31 @@ class TestTheUserInterface:
 
     def test_the_index_has_the_settings(self):
         html = (UI_DIR / "index.html").read_text(encoding="utf-8")
-        for control in ("model", "autostart", "voice", "theme"):
+        for control in ("model", "autostart", "voice"):
             assert f'id="{control}"' in html
+        # **The interface is chosen from four pictures.** The old
+        # switch was a flag for one look, and it had no way to turn
+        # it on.
+        assert 'id="theme-picker"' in html
+        for theme in ("plain", "winamp", "keys", "retro"):
+            assert f'data-theme="{theme}"' in html
+
+    def test_the_topic_buttons_have_a_star(self):
+        """A topic the user works on stays at the front."""
+        script = (UI_DIR / "app.js").read_text(encoding="utf-8")
+        assert "topic-star" in script
+        assert "/settings/favourites" in script
+
+    def test_the_wipe_asks_twice(self):
+        """One click must not empty the store.
+
+        `confirm()` is a native dialog, and in the packaged app it
+        does not belong to the window: the interface can freeze on
+        it. So the button asks twice.
+        """
+        script = (UI_DIR / "app.js").read_text(encoding="utf-8")
+        assert "confirm(" not in script
+        assert "Wirklich alle löschen?" in script
 
     def test_the_index_has_the_wipe_button(self):
         """Everything has to be deletable."""

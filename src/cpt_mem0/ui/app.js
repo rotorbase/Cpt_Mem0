@@ -20,6 +20,9 @@ const state = {
   // **The thread.** The model needs to see the last turns, otherwise
   // every question stands alone and it is not a conversation.
   history: [],
+  // **The topics the user marked.** They stay at the front.
+  favourites: [],
+  theme: "plain",
   suspended: false,
   activeTopic: null,
   clusters: [],
@@ -105,7 +108,49 @@ function renderTopics(clusters, colours) {
       button.classList.add("active");
     }
     button.style.setProperty("--topic", colours[index] || "#2a2e36");
-    button.textContent = cluster.label;
+
+    // **The star.** A topic the user works on stays at the front,
+    // even when there are more topics than buttons. The star is on
+    // the first fact of the topic, not on its name - the name comes
+    // from the model, and the model names it differently tomorrow.
+    const marked = state.favourites.includes(cluster.fact);
+    const star = document.createElement("span");
+    star.className = "topic-star";
+    star.setAttribute("role", "button");
+    star.setAttribute("tabindex", "0");
+    star.textContent = marked ? "★" : "☆";
+    star.title = marked
+      ? "Aus den Lieblingsthemen entfernen"
+      : "Als Lieblingsthema merken";
+    const markFavourite = async (event) => {
+      event.stopPropagation();
+      try {
+        const result = await api("/settings/favourites", {
+          method: "POST",
+          body: JSON.stringify({ fact: cluster.fact, enabled: true }),
+        });
+        state.favourites = result.favourites || [];
+        renderTopics(clusters, colours);
+        renderFavourites();
+        status(state.favourites.includes(cluster.fact)
+          ? `Thema gemerkt: ${cluster.label}`
+          : `Thema vergessen: ${cluster.label}`);
+      } catch (error) {
+        status(error.message, "error");
+      }
+    };
+    star.addEventListener("click", markFavourite);
+    star.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        markFavourite(event);
+      }
+    });
+    button.appendChild(star);
+
+    const label = document.createElement("span");
+    label.className = "topic-label";
+    label.textContent = cluster.label;
+    button.appendChild(label);
 
     const count = document.createElement("span");
     count.className = "topic-count";
@@ -201,6 +246,65 @@ function renderLoading() {
 }
 
 /* ------------------------------------------------------------------ */
+/* die Lieblingsthemen                                                   */
+/* ------------------------------------------------------------------ */
+
+function renderFavourites() {
+  const box = $("favourites");
+  const list = $("favourites-list");
+  if (!box || !list) return;
+  list.innerHTML = "";
+
+  if (!state.favourites.length) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  for (const fact of state.favourites) {
+    const chip = document.createElement("span");
+    chip.className = "favourite-chip";
+    chip.textContent = fact.length > 28 ? `${fact.slice(0, 28)}…` : fact;
+    chip.title = fact;
+    list.appendChild(chip);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* die Oberflaeche                                                       */
+/* ------------------------------------------------------------------ */
+
+const THEMES = ["plain", "winamp", "keys", "retro"];
+
+function renderTheme() {
+  document.body.className = state.theme;
+  const picker = $("theme-picker");
+  if (!picker) return;
+  for (const card of picker.querySelectorAll(".theme-card")) {
+    card.classList.toggle("active", card.dataset.theme === state.theme);
+  }
+}
+
+function bindThemePicker() {
+  const picker = $("theme-picker");
+  if (!picker) return;
+  for (const card of picker.querySelectorAll(".theme-card")) {
+    card.addEventListener("click", async () => {
+      state.theme = card.dataset.theme;
+      renderTheme();
+      try {
+        await api("/settings/theme", {
+          method: "POST",
+          body: JSON.stringify({ value: state.theme }),
+        });
+        status(`Oberfläche: ${card.querySelector(".theme-name").textContent}`);
+      } catch (error) {
+        status(error.message, "error");
+      }
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* die Anzeige aktualisieren                                             */
 /* ------------------------------------------------------------------ */
 
@@ -247,8 +351,9 @@ async function refresh() {
 
 async function refreshTopics() {
   try {
-    const count = $("cluster-count").value;
-    const data = await api(`/topics?count=${count}`);
+    // **Six topics.** The number of buttons is fixed - the topics
+    // that are worked on come first, the rest fills up.
+    const data = await api("/topics?count=6");
     state.clusters = data.clusters || [];
     renderTopics(state.clusters, data.colours || []);
   } catch (error) {
@@ -400,9 +505,22 @@ function bindToggle(id, onChange) {
 /* der Start                                                             */
 /* ------------------------------------------------------------------ */
 
-function start() {
+async function start() {
   $("power").addEventListener("click", togglePower);
   renderPower();
+
+  // **The settings come first.** The interface and the topics the
+  // user marked are part of them, and both are shown in the first
+  // frame.
+  try {
+    const settings = await api("/settings");
+    state.favourites = settings.favourites || [];
+    state.theme = settings.theme || "plain";
+    renderTheme();
+    renderFavourites();
+  } catch (error) {
+    status(error.message, "error");
+  }
 
   say("Cpt Mem0 ist bereit. Alles, was du mir sagst, wird gemerkt.",
       "system");
@@ -418,11 +536,6 @@ function start() {
     await send(text);
   });
 
-  $("cluster-count").addEventListener("input", (event) => {
-    $("cluster-value").textContent = event.target.value;
-  });
-  $("cluster-count").addEventListener("change", refreshTopics);
-
   bindToggle("autostart", async (next) => {
     // The daemon owns the autostart. It writes the task on Windows.
     await api("/settings/autostart", {
@@ -435,25 +548,58 @@ function start() {
   bindToggle("voice", async (next) => {
     await api("/settings/voice", {
       method: "POST",
-      body: JSON.stringify({ enabled: next }),
+      body: JSON.stringify({ value: next }),
     });
     status(next
       ? "Sprachausgabe an. Die Stimme läuft auf der CPU."
       : "Sprachausgabe aus.");
   });
 
-  bindToggle("theme", async (next) => {
-    document.body.classList.toggle("plain", !next);
-    await api("/settings/theme", {
-      method: "POST",
-      body: JSON.stringify({ winamp: next }),
-    });
-  });
+  bindThemePicker();
 
+  // **The switches show what is set.** Before this they were
+  // whatever the HTML said, and the state came back from the server
+  // on every start.
+  api("/settings").then((settings) => {
+    for (const name of ["autostart", "voice"]) {
+      const button = $(name);
+      if (button) {
+        button.setAttribute("aria-checked",
+                            String(settings[name] === true));
+      }
+    }
+  }).catch(() => {});
+
+  // **The store is not wiped by one click.**
+  //
+  // The native question box of the browser is not usable here: in
+  // the packaged app it is a dialog that does not belong to the
+  // window, and it can freeze the interface. So the button asks
+  // twice - the first click arms it, the second one wipes. Six
+  // seconds without a second click and it disarms itself.
+  let wipeArmed = false;
+  let wipeTimer = null;
   $("wipe").addEventListener("click", async () => {
-    if (!confirm("Alle Erinnerungen löschen? Das kann nicht rückgängig gemacht werden.")) {
+    const button = $("wipe");
+    if (!wipeArmed) {
+      wipeArmed = true;
+      button.textContent = "Wirklich alle löschen?";
+      button.classList.add("armed");
+      status("Noch ein Klick löscht alle Erinnerungen. Das geht nicht "
+             + "rückgängig.", "error");
+      if (wipeTimer) clearTimeout(wipeTimer);
+      wipeTimer = setTimeout(() => {
+        wipeArmed = false;
+        button.textContent = "Alle Erinnerungen löschen";
+        button.classList.remove("armed");
+      }, 6000);
       return;
     }
+
+    wipeArmed = false;
+    if (wipeTimer) clearTimeout(wipeTimer);
+    button.textContent = "Alle Erinnerungen löschen";
+    button.classList.remove("armed");
     try {
       await api("/memories/reset", { method: "DELETE" });
       say("Der Store ist leer.", "system");

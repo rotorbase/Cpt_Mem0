@@ -97,6 +97,11 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      // **The renderer keeps drawing in the background.** Without it
+      // Electron throttles the timers of a window that is covered -
+      // the status would stop, and the window would show a stale
+      // picture when it comes back.
+      backgroundThrottling: false,
     },
   });
 

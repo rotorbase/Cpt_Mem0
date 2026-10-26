@@ -533,7 +533,9 @@ class Engine:
         """How many memories the store holds."""
         return len(self.all())
 
-    def vectors(self, limit: int = 200) -> list[tuple[str, list[float]]]:
+    def vectors(self, limit: int = 200,
+                with_time: bool = False
+                ) -> list[tuple[str, list[float]]]:
         """The stored memories with their vectors.
 
         The UI clusters them into the topic buttons. The vectors come
@@ -573,6 +575,65 @@ class Engine:
                 continue
             result.append((str(text), list(vector)))
         return result
+
+    def entries(self, limit: int = 300
+                ) -> list[tuple[str, list[float], float]]:
+        """The memories with their vectors and when they were touched.
+
+        **When the topic was talked about last.** The topic buttons
+        are the topics the user works on now, not the ones with the
+        most facts. A fact from last week and one from this morning
+        are not the same topic, and the button has to show the recent
+        one.
+
+        The time comes from the memories themselves. The vectors come
+        from the vector store, where they are already - asking the
+        embedder again would cost a round trip per memory.
+        """
+        vectors = self.vectors(limit=limit)
+
+        times: dict[str, float] = {}
+        try:
+            memories = self.all()
+        except Exception:
+            memories = []
+        for item in memories:
+            text = str(item.get("memory") or item.get("data") or "")
+            if not text:
+                continue
+            stamp = _timestamp(item)
+            if stamp > times.get(text, 0.0):
+                times[text] = stamp
+
+        return [(text, vector, times.get(text, 0.0))
+                for text, vector in vectors]
+
+
+def _timestamp(item: dict[str, Any]) -> float:
+    """When a memory was last touched, as a number of seconds.
+
+    mem0 writes the times as text - ISO 8601 - and the field it uses
+    depends on the version. The newest of the fields that are there
+    is the one that counts.
+    """
+    from datetime import datetime
+
+    for key in ("updated_at", "created_at", "timestamp", "last_updated"):
+        value = item.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, (int, float)):
+            number = float(value)
+            # Milliseconds since the epoch look like years.
+            if number > 1e11:
+                number = number / 1000.0
+            return number
+        text = str(value).replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(text).timestamp()
+        except ValueError:
+            continue
+    return 0.0
 
 
 def _as_dict(value: Any) -> dict[str, Any]:

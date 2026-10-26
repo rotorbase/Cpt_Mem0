@@ -44,6 +44,13 @@
 <!-- Die Themen-Tasten: wie ein Equalizer -->
 <nav class="topics" id="topics"></nav>
 
+<!-- Die Themen, die der User gemerkt hat: sie bleiben, wenn es mehr
+     Themen gibt als Knöpfe. -->
+<div class="favourites" id="favourites" hidden>
+  <span class="favourites-label">Deine Themen</span>
+  <div class="favourites-list" id="favourites-list"></div>
+</div>
+
 <!-- Die Chat-Zeile -->
 <main class="chat">
   <div class="messages" id="messages"></div>
@@ -76,21 +83,31 @@
             aria-checked="false"><span></span></button>
   </div>
 
-  <div class="setting switch">
-    <label for="theme">Winamp-Look</label>
-    <button type="button" class="toggle" id="theme" role="switch"
-            aria-checked="true"><span></span></button>
+  <div class="setting themes">
+    <span class="label">Oberfläche</span>
+    <div class="theme-picker" id="theme-picker">
+      <button type="button" class="theme-card" data-theme="plain">
+        <span class="theme-shot shot-plain"></span>
+        <span class="theme-name">Schlicht</span>
+      </button>
+      <button type="button" class="theme-card" data-theme="winamp">
+        <span class="theme-shot shot-winamp"></span>
+        <span class="theme-name">Player</span>
+      </button>
+      <button type="button" class="theme-card" data-theme="keys">
+        <span class="theme-shot shot-keys"></span>
+        <span class="theme-name">Tasten</span>
+      </button>
+      <button type="button" class="theme-card" data-theme="retro">
+        <span class="theme-shot shot-retro"></span>
+        <span class="theme-name">Messenger</span>
+      </button>
+    </div>
   </div>
 
-  <div class="setting">
-    <label for="cluster-count">Themen</label>
-    <input type="range" id="cluster-count" min="3" max="6" value="5">
-    <span id="cluster-value">5</span>
-  </div>
-
-  <div class="setting">
-    <span class="label">Alles löschen</span>
-    <button type="button" class="danger" id="wipe">Store leeren</button>
+  <div class="setting danger-zone">
+    <span class="label">Daten</span>
+    <button type="button" class="danger" id="wipe">Alle Erinnerungen löschen</button>
   </div>
 </footer>
 
