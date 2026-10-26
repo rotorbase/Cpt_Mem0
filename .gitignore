@@ -35,3 +35,7 @@ desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# The desktop app
+node_modules/
+dist-electron/

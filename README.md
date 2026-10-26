@@ -46,9 +46,11 @@ that `start` would use.
 - **Runs the store embedded.** Qdrant in-process: no server, no Docker, no
   database daemon.
 - **Stays local.** No telemetry, no outbound requests.
-- **Has a window.** A native window that the daemon serves: a big
-  on/off switch for the models, the topic buttons filled from the
-  store, and every memory findable and deletable.
+- **Has a window of its own.** A native desktop app: a big on/off
+  switch for the models, the topic buttons filled from the store,
+  and every memory findable and deletable. The window is Electron,
+  the work is done by the Python backend - the same technology
+  Discord uses.
 - **Can speak.** The voice output uses the speech engine Windows
   already has - no model, no download, no VRAM.
 - **Finds everything.** mem0's `get_all` returns 20 memories by default —
@@ -56,10 +58,15 @@ that `start` would use.
 
 ## Install
 
-**Windows:** download the package from the
-[releases](https://github.com/rotorbase/Cpt_Mem0/releases), unpack it
-anywhere, and run `Cpt_Mem0.exe`. The package is a folder with the
-`.exe` in it - see [docs/install-windows.md](docs/install-windows.md).
+**Windows:** download `Cpt Mem0 Setup 0.1.0.exe` from the
+[releases](https://github.com/rotorbase/Cpt_Mem0/releases) and run it.
+The installer puts a start menu entry and a desktop icon on the way.
+There is also `Cpt_Mem0-0.1.0-portable.exe` - one file, no
+installation, runs from anywhere.
+
+The app is a program with a window of its own. No browser, no
+terminal, no console flashing up while a model loads. See
+[docs/desktop.md](docs/desktop.md).
 
 From the source tree:
 

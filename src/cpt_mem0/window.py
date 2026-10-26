@@ -39,6 +39,11 @@ LOG_FILENAME = "window.log"
 #: and if the app ended in the meantime the daemon would go with it.
 BROWSER_FALLBACK = 42
 
+#: What the module returns when no window was opened at all. The
+#: caller shows the interface itself - that is how the Electron app
+#: starts the backend.
+NO_WINDOW = 43
+
 #: The title of the window.
 WINDOW_TITLE = "Cpt Mem0"
 
@@ -360,7 +365,6 @@ def open_window(address: str, title: str = WINDOW_TITLE,
     # its own files. The runtime does not find them by name, so they
     # are loaded by their path.
     try:
-        import clr
 
         loaded = _load_webview2_assemblies()
         log_problem(f"die WebView2-Assemblies: {loaded}")
@@ -403,7 +407,7 @@ def _no_window(address: str) -> int:
     """
     log_problem(f"the window could not be opened - the address is "
                 f"{address}")
-    print(f"the window could not be opened")
+    print("the window could not be opened")
     print(f"the interface is at {address}")
     print(f"the reason is in the log: {log_path()}")
     return BROWSER_FALLBACK
@@ -417,9 +421,15 @@ def run_window(daemon: Any, address: str,
     main thread, because the window toolkit wants the main thread.
     When the window closes, the daemon stops - the store lock has to
     be released.
+
+    With ``open_browser`` **no window is opened at all**: the daemon
+    serves, and the caller shows the interface. That is how the
+    Electron app starts the backend - it has a window of its own
+    and only needs the server.
     """
     if open_browser:
-        return _open_browser(address)
+        log_problem(f"kein Fenster - der Server laeuft auf {address}")
+        return NO_WINDOW
 
     def on_close() -> None:
         try:

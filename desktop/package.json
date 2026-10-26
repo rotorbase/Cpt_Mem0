@@ -1,0 +1,68 @@
+{
+  "name": "cpt-mem0",
+  "productName": "Cpt Mem0",
+  "version": "0.1.0",
+  "description": "Self-contained local mem0 service for consumer GPUs",
+  "license": "MIT",
+  "author": "rotorbase",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win nsis portable"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.rotorbase.cptmem0",
+    "productName": "Cpt Mem0",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist/Cpt_Mem0",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Cpt Mem0"
+    },
+    "portable": {
+      "artifactName": "Cpt_Mem0-${version}-portable.exe"
+    },
+    "forceCodeSigning": false
+  }
+}

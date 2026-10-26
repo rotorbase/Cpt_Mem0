@@ -33,7 +33,7 @@ TYPES = ("*.py", "*.md", "*.json", "*.yml", "*.yaml", "*.html", "*.js",
 #: repository.
 SKIP = {".git", "dist", "build", ".venv", ".venv-build", "venv",
         "__pycache__", ".pytest_cache", ".ruff_cache", "results",
-        "node_modules", "venv-build"}
+        "node_modules", "venv-build", "dist-electron", "desktop"}
 
 #: What must not be in the repository.
 #:

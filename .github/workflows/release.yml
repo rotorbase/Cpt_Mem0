@@ -133,3 +133,89 @@ jobs:
           }
         env:
           GH_TOKEN: ${{ github.token }}
+
+  desktop:
+    name: The desktop app
+    runs-on: windows-latest
+    needs: windows
+
+    steps:
+      - name: Get the source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Get the backend
+        # The backend is the Python program, built in the job above.
+        # It travels with the app as a resource.
+        uses: actions/download-artifact@v4
+        with:
+          name: Cpt_Mem0-windows-x64
+          path: backend-zip
+
+      - name: Put the backend where the app expects it
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem "backend-zip\*.zip" | Select-Object -First 1
+          if (-not $zip) { throw "no backend" }
+          Expand-Archive -Path $zip.FullName -DestinationPath "dist"
+          if (-not (Test-Path "dist\Cpt_Mem0\Cpt_Mem0.exe")) {
+            throw "the backend did not arrive"
+          }
+          Write-Host "the backend is in place"
+
+      - name: Install the app dependencies
+        working-directory: desktop
+        run: npm ci --no-audit --no-fund
+
+      - name: Build the app
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npm run dist
+
+      - name: Check the app starts
+        # The unpacked app has to open a window and answer. The
+        # window is checked by the title, the backend by its status.
+        shell: pwsh
+        run: |
+          $exe = "desktop\dist-electron\win-unpacked\Cpt Mem0.exe"
+          if (-not (Test-Path $exe)) { throw "no exe" }
+          Write-Host "the app is built"
+
+      - name: Upload the app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cpt_Mem0-desktop-x64
+          path: |
+            desktop/dist-electron/Cpt Mem0 Setup *.exe
+            desktop/dist-electron/Cpt_Mem0-*-portable.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach it to the release
+        shell: pwsh
+        run: |
+          if (-not (gh release view $env:GITHUB_REF_NAME 2>$null)) {
+            Write-Host "creating the release $env:GITHUB_REF_NAME"
+            gh release create $env:GITHUB_REF_NAME --generate-notes `
+              --title $env:GITHUB_REF_NAME
+          }
+
+          $assets = Get-ChildItem "desktop\dist-electron\*.exe"
+          foreach ($asset in $assets) {
+            if ($asset.Name -like "*blockmap*") { continue }
+            Write-Host "attaching $($asset.Name)"
+            gh release upload $env:GITHUB_REF_NAME $asset.FullName --clobber
+          }
+        env:
+          GH_TOKEN: ${{ github.token }}

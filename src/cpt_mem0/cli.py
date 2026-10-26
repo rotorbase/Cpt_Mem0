@@ -556,6 +556,7 @@ def cmd_ui(args) -> int:
     from .daemon import Daemon, DaemonPaths
     from .window import (
         BROWSER_FALLBACK,
+        NO_WINDOW,
         run_window,
         setup_logging,
         start_daemon_in_thread,
@@ -589,6 +590,18 @@ def cmd_ui(args) -> int:
         result = run_window(daemon, address, open_browser=args.no_browser)
     except KeyboardInterrupt:
         print("stopping")
+        daemon.stop()
+        return 0
+
+    if result == NO_WINDOW:
+        # **The daemon serves, the caller shows the interface.**
+        # That is the Electron app: it has a window of its own and
+        # starts this program for the server behind it.
+        try:
+            while daemon.is_running:
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("stopping")
         daemon.stop()
         return 0
 
