@@ -939,3 +939,66 @@ class TestTheModelReachesTheConfiguration:
         after = (real.read_text(encoding="utf-8")
                  if real.is_file() else None)
         assert before == after
+
+
+class TestTheNewPieces:
+    """The backup, the names, the moving and the voice."""
+
+    @pytest.fixture
+    def daemon(self, tmp_path):
+        config = Config()
+        config.server.port = 0
+        config.store.path = tmp_path / "store"
+        daemon = Daemon(config, DaemonPaths(logs=tmp_path / "logs",
+                                           state=tmp_path / "state"))
+        daemon.service = MemoryService(_engine_with_fake(tmp_path))
+        return daemon
+
+    def test_the_store_can_be_saved(self, daemon, tmp_path, monkeypatch):
+        """The state of the store, as a file the user keeps."""
+        import json
+
+        monkeypatch.setattr("cpt_mem0.install.data_dir", lambda: tmp_path)
+        result = daemon.export_store()
+        assert result["ok"] is True
+        path = Path(result["path"])
+        assert path.is_file()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert "memories" in payload
+        # The names the user gave the topics belong to the backup.
+        assert "topic_names" in payload
+        assert "topic_assignments" in payload
+
+    def test_a_topic_can_be_renamed(self, daemon):
+        result = daemon.rename_topic("Musik", "Klavier")
+        assert result["ok"] is True
+        assert daemon.settings_data["topic_names"]["Musik"] == "Klavier"
+
+    def test_a_memory_can_be_moved(self, daemon):
+        result = daemon.move_memory("Der Nutzer mag Maerchen.", "Buecher")
+        assert result["ok"] is True
+        assert (daemon.settings_data["topic_assignments"]
+                ["Der Nutzer mag Maerchen."] == "Buecher")
+
+    def test_the_name_of_the_user_is_used(self, daemon):
+        daemon.rename_topic("Musik", "Klavier")
+        board = daemon.topic_board()
+        for topic in board["topics"]:
+            if topic["name"] == "Musik":
+                assert topic["label"] == "Klavier"
+                break
+        else:
+            raise AssertionError("das Thema Musik fehlt")
+
+    def test_the_model_proposes_a_name(self, daemon, monkeypatch):
+        monkeypatch.setattr(daemon, "suspended", False)
+        monkeypatch.setattr(daemon, "_ask_llm", lambda prompt: "Fahrrad")
+        result = daemon.suggest_topic_name("Auto & Rad", ["Rad zur Arbeit"])
+        assert result["ok"] is True
+        assert result["name"] == "Fahrrad"
+
+    def test_the_voices_are_listed(self, daemon):
+        catalogue = daemon.voice_catalogue()
+        assert "voices" in catalogue
+        assert "downloadable" in catalogue
+

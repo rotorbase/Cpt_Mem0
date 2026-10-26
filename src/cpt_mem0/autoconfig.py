@@ -67,7 +67,12 @@ class AutoConfig:
 EMBEDDER_FLAGS = [
     "--parallel", "1",
     "-c", "2048",
-    "-ngl", "99",
+    # **The embedder runs on the processor.** It is small, it only
+    # works when a memory is written or searched, and the card is
+    # better used for the model that answers and for the speech
+    # recognition. This way the card gets about 400 MiB back.
+    "-ngl", "0",
+    "--threads", "8",
     "--embeddings",
     "--pooling", "mean",
     "--kv-unified",

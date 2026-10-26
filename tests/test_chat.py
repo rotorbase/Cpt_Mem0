@@ -143,9 +143,10 @@ class TestTheVoice:
         from cpt_mem0.daemon import Daemon
 
         class _Service:
-            def chat(self, text, user_id=None, history=None):
+            def chat(self, text, user_id=None, history=None, tools=False):
                 return {"ok": True, "answer": "Ich bin dein Assistent.",
-                        "stored": 0, "results": [], "used_memories": 0}
+                        "stored": 0, "results": [], "used_memories": 0,
+                        "web_calls": []}
 
         daemon = Daemon.__new__(Daemon)
         daemon.settings_data = {"voice": True, "voice_name": ""}
@@ -169,3 +170,63 @@ class TestTheVoice:
         """
         daemon.settings_data["voice"] = False
         assert daemon.speak("Hallo") is False
+
+
+class TestTheWeb:
+    """The model can ask the web for something.
+
+    The model itself does not have the internet - it is a file of
+    weights. But the app can go online, and it can hand the model
+    what it finds.
+    """
+
+    def test_the_tools_are_defined(self):
+        from cpt_mem0 import web
+
+        names = [tool["function"]["name"] for tool in web.TOOLS]
+        assert "web_search" in names
+        assert "web_fetch" in names
+
+    def test_the_tools_have_a_shape(self):
+        """The shape the OpenAI-compatible endpoint expects."""
+        from cpt_mem0 import web
+
+        for tool in web.TOOLS:
+            assert tool["type"] == "function"
+            function = tool["function"]
+            assert function["name"]
+            assert function["description"]
+            assert function["parameters"]["type"] == "object"
+
+    def test_a_search_returns_results(self):
+        from cpt_mem0 import web
+
+        found = web.search("Python programming language")
+        assert isinstance(found, list)
+        for entry in found:
+            assert entry["title"]
+            assert "text" in entry
+
+    def test_a_page_is_read(self):
+        from cpt_mem0 import web
+
+        # **A page that answers.** The test may not depend on a
+        # single address - the network is not always there.
+        result = web.fetch("https://de.wikipedia.org/wiki/Python_(Programmiersprache)")
+        if result["ok"] != "yes":
+            return
+        assert "Python" in result["title"] or "Python" in result["text"]
+
+    def test_a_broken_address_says_so(self):
+        from cpt_mem0 import web
+
+        result = web.fetch("not-an-address")
+        assert result["ok"] == "no"
+        assert result["text"]
+
+    def test_the_tools_run(self):
+        from cpt_mem0 import web
+
+        answer = web.run("web_fetch", {"url": "https://de.wikipedia.org/wiki/Python"})
+        assert answer
+

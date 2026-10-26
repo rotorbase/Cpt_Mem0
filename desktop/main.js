@@ -10,7 +10,7 @@
  * reachable whether the models run or not.
  */
 
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell, session } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
@@ -107,6 +107,15 @@ function startBackend() {
 }
 
 function createWindow() {
+  // **The microphone of the headset.** The app asks the system for
+  // it when the user presses the button - and only then. Electron
+  // would ask by itself, so the answer is given here: the
+  // microphone is allowed, everything else is not.
+  session.defaultSession.setPermissionRequestHandler(
+    (webContents, permission, callback) => {
+      callback(permission === "media" || permission === "audioCapture");
+    });
+
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,

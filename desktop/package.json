@@ -1,7 +1,7 @@
 {
   "name": "cpt-mem0",
   "productName": "Cpt Mem0",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "description": "Self-contained local mem0 service for consumer GPUs",
   "license": "MIT",
   "author": "rotorbase",

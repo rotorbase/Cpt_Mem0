@@ -54,6 +54,8 @@
   <div class="messages" id="messages"></div>
 
   <form class="composer" id="composer">
+    <button type="button" class="mic" id="mic" title="Diktieren"
+            aria-label="Diktieren" hidden>🎙</button>
     <input type="text" id="input" autocomplete="off" spellcheck="false"
            placeholder="Sag etwas – es wird gemerkt.">
     <button type="submit" class="send" title="Senden">↵</button>
@@ -66,6 +68,10 @@
     <div class="dial">
       <span class="dial-value" id="tps">–</span>
       <span class="dial-label">Token/s</span>
+    </div>
+    <div class="dial">
+      <span class="dial-value" id="cpu-percent">–</span>
+      <span class="dial-label">CPU</span>
     </div>
     <div class="dial">
       <span class="dial-value" id="gpu-percent">–</span>
@@ -97,6 +103,12 @@
       <label for="voice-name">Stimme</label>
       <select id="voice-name"><option value="">–</option></select>
     </div>
+
+    <div class="setting switch">
+      <label for="web">Webzugriff</label>
+      <button type="button" class="toggle" id="web" role="switch"
+              aria-checked="false"><span></span></button>
+    </div>
   </div>
 
   <!-- **Die Modelle und die Daten: unten links.** Beides ist die
@@ -115,6 +127,12 @@
       <span class="path" id="model-folder-path"></span>
     </div>
 
+    <div class="setting">
+      <span class="label">Erinnerungen</span>
+      <button type="button" id="backup">Stand speichern</button>
+      <button type="button" id="restore">Stand laden</button>
+    </div>
+
     <div class="setting danger-zone">
       <span class="label">Daten</span>
       <button type="button" class="danger" id="wipe">Alle Erinnerungen löschen</button>
@@ -130,6 +148,29 @@
   </div>
   <p class="model-hint" id="topic-dialog-hint"></p>
   <div class="topic-dialog-body" id="topic-dialog-body"></div>
+</dialog>
+
+<!-- Das Fenster, in dem das Loeschen bestaetigt wird. -->
+<dialog class="wipe-dialog" id="wipe-dialog">
+  <div class="model-head">
+    <h2>Alle Erinnerungen löschen?</h2>
+    <button type="button" class="close" id="wipe-cancel">×</button>
+  </div>
+  <p class="model-hint" id="wipe-hint"></p>
+  <div class="wipe-actions">
+    <button type="button" class="topic-tool" id="wipe-cancel">Abbrechen</button>
+    <button type="button" class="topic-tool danger" id="wipe-confirm">
+      Ja, alle löschen</button>
+  </div>
+</dialog>
+
+<!-- Wohin eine Erinnerung gehoert. -->
+<dialog class="move-dialog" id="move-dialog">
+  <div class="model-head">
+    <h2 id="move-title">Wohin gehoert diese Erinnerung?</h2>
+    <button type="button" class="close" id="move-close">×</button>
+  </div>
+  <div class="move-list" id="move-list"></div>
 </dialog>
 
 <!-- Der Themenbaum: alle Themen mit ihren Fakten. -->

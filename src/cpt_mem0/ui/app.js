@@ -288,6 +288,12 @@ function renderCockpit(runtime) {
   const percent = runtime.gpu_percent;
   $("gpu-percent").textContent =
     percent === null || percent === undefined ? "–" : `${percent}%`;
+
+  // **The processor.** The user compares the cockpit with the task
+  // manager, and the task manager shows both.
+  const cpu = runtime.cpu_percent;
+  $("cpu-percent").textContent =
+    cpu === null || cpu === undefined ? "–" : `${cpu}%`;
   // **The short name of the card.** "NVIDIA GEFORCE RTX 3060" does
   // not fit into a dial, and the panel has to stay inside the
   // window.
@@ -327,36 +333,31 @@ async function loadVoices() {
   }
 
   select.innerHTML = "";
-  if (!data.available) {
-    // **The reason belongs to the user.** A switch that changes
-    // nothing is worse than no switch.
-    const option = document.createElement("option");
-    option.value = "";
-    option.textContent = "keine Stimme";
-    select.appendChild(option);
-    select.disabled = true;
-    status(data.reason || "Auf diesem Rechner gibt es keine Stimme.",
-           "error");
-    return;
-  }
+  const installed = data.voices || [];
 
   select.disabled = false;
-  for (const voice of data.voices) {
+  for (const voice of installed) {
     const option = document.createElement("option");
-    option.value = voice.description;
+    option.value = voice.name;
     option.textContent = `${voice.name} (${voice.language})`;
     select.appendChild(option);
   }
+
+  // **The one the app uses.** The neural voice - the voices of
+  // Windows are not offered any more, and the voice is part of the
+  // program: there is nothing to download.
+  select.value = "Piper Thorsten";
   if (data.selected) {
     select.value = data.selected;
   }
   select.addEventListener("change", async () => {
+    const chosen = select.value;
     try {
       await api("/settings/voice-name", {
         method: "POST",
-        body: JSON.stringify({ value: select.value }),
+        body: JSON.stringify({ value: chosen }),
       });
-      status(`Stimme: ${select.value}`);
+      status(`Stimme: ${chosen}`);
     } catch (error) {
       status(error.message, "error");
     }
@@ -413,7 +414,8 @@ function renderBoard(board) {
 
       const label = document.createElement("span");
       label.className = "topic-label";
-      label.textContent = topic.name;
+      // **The name the user gave it.**
+      label.textContent = topic.label || topic.name;
       button.appendChild(label);
 
       const count = document.createElement("span");
@@ -441,10 +443,76 @@ function openTopic(topic) {
   const body = $("topic-dialog-body");
   if (!dialog) return;
 
-  title.textContent = topic.name;
+  title.textContent = topic.label || topic.name;
   hint.textContent = topic.count
     ? `${topic.count} Erinnerungen im Store`
     : "In diesem Thema ist noch nichts gespeichert.";
+
+  // **The name belongs to the user.** The model may propose one,
+  // but the name that is saved is the one the user wrote.
+  const tools = document.createElement("div");
+  tools.className = "topic-tools";
+
+  const field = document.createElement("input");
+  field.type = "text";
+  field.className = "topic-name-field";
+  field.value = topic.label || topic.name;
+  field.maxLength = 40;
+  tools.appendChild(field);
+
+  const suggest = document.createElement("button");
+  suggest.type = "button";
+  suggest.className = "topic-tool";
+  suggest.textContent = "Vorschlag vom Modell";
+  suggest.addEventListener("click", async () => {
+    suggest.disabled = true;
+    suggest.textContent = "das Modell fragt…";
+    try {
+      const facts = [];
+      for (const part of topic.subtopics || []) {
+        for (const fact of part.facts || []) facts.push(fact);
+      }
+      const result = await api("/topics/suggest", {
+        method: "POST",
+        body: JSON.stringify({ topic: topic.name, facts }),
+      });
+      if (result.ok && result.name) {
+        field.value = result.name;
+        status(`Vorschlag: ${result.name}`);
+      } else {
+        status(result.error || "der Modell hat keinen Namen gefunden", "error");
+      }
+    } catch (error) {
+      status(error.message, "error");
+    } finally {
+      suggest.disabled = false;
+      suggest.textContent = "Vorschlag vom Modell";
+    }
+  });
+  tools.appendChild(suggest);
+
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "topic-tool primary";
+  save.textContent = "Namen speichern";
+  save.addEventListener("click", async () => {
+    try {
+      const result = await api("/topics/rename", {
+        method: "POST",
+        body: JSON.stringify({ topic: topic.name, name: field.value }),
+      });
+      if (result.ok) {
+        status(`Das Thema heisst jetzt ${result.name}.`);
+        await refreshTopics();
+      } else {
+        status(result.error || "der Name wurde nicht gespeichert", "error");
+      }
+    } catch (error) {
+      status(error.message, "error");
+    }
+  });
+  tools.appendChild(save);
+  body.appendChild(tools);
 
   body.innerHTML = "";
   if (!topic.count) {
@@ -476,11 +544,67 @@ function openTopic(topic) {
       for (const fact of part.facts || []) {
         const item = document.createElement("li");
         item.textContent = fact;
+        // **A fact in the wrong place.** The model files the facts
+        // where it thinks they belong, and it is sometimes wrong.
+        const move = document.createElement("button");
+        move.type = "button";
+        move.className = "fact-move";
+        move.textContent = "verschieben";
+        move.title = "Diese Erinnerung in ein anderes Thema legen";
+        move.addEventListener("click", () => openMove(fact, topic));
+        item.appendChild(move);
         list.appendChild(item);
       }
       block.appendChild(list);
       body.appendChild(block);
     }
+  }
+  dialog.showModal();
+}
+
+/* **Where should this fact go?** The topics of the board, and the
+ * decision of the user. It is remembered. */
+function openMove(fact, topic) {
+  const board = state.board;
+  if (!board) return;
+  const dialog = $("move-dialog");
+  const list = $("move-list");
+  const title = $("move-title");
+  if (!dialog) return;
+
+  title.textContent = "Wohin gehört diese Erinnerung?";
+  list.innerHTML = "";
+  for (const other of board.topics || []) {
+    if (other.name === topic.name) continue;
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "move-item";
+    const name = document.createElement("span");
+    name.className = "move-name";
+    name.textContent = other.label || other.name;
+    const count = document.createElement("span");
+    count.className = "move-count";
+    count.textContent = other.count;
+    item.appendChild(name);
+    item.appendChild(count);
+    item.addEventListener("click", async () => {
+      try {
+        const result = await api("/topics/move", {
+          method: "POST",
+          body: JSON.stringify({ fact, topic: other.name }),
+        });
+        if (result.ok) {
+          dialog.close();
+          status(`Verschoben nach ${other.label || other.name}.`);
+          await refreshTopics();
+        } else {
+          status(result.error || "das Verschieben hat nicht geklappt", "error");
+        }
+      } catch (error) {
+        status(error.message, "error");
+      }
+    });
+    list.appendChild(item);
   }
   dialog.showModal();
 }
@@ -763,6 +887,13 @@ async function send(text) {
     const answer = result.answer || "Keine Antwort.";
     say(answer, "assistant");
 
+    // **What the model asked the web for.** The user sees it, so
+    // nothing leaves the machine unnoticed.
+    for (const call of result.web_calls || []) {
+      const argument = Object.values(call.arguments || {})[0];
+      say(`Im Web nachgeschlagen: ${argument || call.tool}`, "system");
+    }
+
     // **The thread grows with the conversation.** Only the last turns
     // are kept - the model gets a window, not the whole life.
     state.history.push({ role: "user", content: text });
@@ -845,6 +976,165 @@ function bindToggle(id, onChange) {
 /* der Start                                                             */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------
+ * Das Ohr: aufnehmen, diktieren, sprechen.
+ *
+ * Der Ton kommt aus dem Mikrofon des Headsets, wird hier auf 16 kHz
+ * mono gebracht - das ist, was das Programm zum Hoeren braucht -
+ * und geht an den Server. Der Server rechnet die Worte und schickt
+ * sie zurueck, wo sie wie eine getippte Frage behandelt werden.
+ * ------------------------------------------------------------------ */
+
+const dictation = {
+  recorder: null,
+  stream: null,
+  chunks: [],
+  busy: false,
+};
+
+/** The wave file of the recording: 16 kHz, mono, 16 bit. */
+function toWave(buffer) {
+  const rate = 16000;
+  const channels = buffer.numberOfChannels;
+  const frames = buffer.length;
+
+  // **Down to one channel, then to the rate the program wants.**
+  const mono = new Float32Array(frames);
+  for (let index = 0; index < frames; index++) {
+    let sum = 0;
+    for (let channel = 0; channel < channels; channel++) {
+      sum += buffer.getChannelData(channel)[index];
+    }
+    mono[index] = sum / channels;
+  }
+
+  const ratio = buffer.sampleRate / rate;
+  const length = Math.floor(frames / ratio);
+  const samples = new Int16Array(length);
+  for (let index = 0; index < length; index++) {
+    const position = index * ratio;
+    const left = Math.floor(position);
+    const right = Math.min(left + 1, frames - 1);
+    const part = position - left;
+    const value = mono[left] * (1 - part) + mono[right] * part;
+    samples[index] = Math.max(-1, Math.min(1, value)) * 32767;
+  }
+
+  const bytes = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(bytes);
+  const write = (offset, text) => {
+    for (let index = 0; index < text.length; index++) {
+      view.setUint8(offset + index, text.charCodeAt(index));
+    }
+  };
+  write(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  write(8, "WAVE");
+  write(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let index = 0; index < samples.length; index++) {
+    view.setInt16(44 + index * 2, samples[index], true);
+  }
+  return bytes;
+}
+
+/** The recording as text, so it can go through the door. */
+function toBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const piece = 0x8000;
+  for (let index = 0; index < bytes.length; index += piece) {
+    binary += String.fromCharCode.apply(
+      null, bytes.subarray(index, index + piece));
+  }
+  return btoa(binary);
+}
+
+/** Start the recording. */
+async function startRecording() {
+  if (dictation.busy || dictation.recorder) return;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    });
+    dictation.stream = stream;
+    dictation.chunks = [];
+    const recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        dictation.chunks.push(event.data);
+      }
+    };
+    recorder.onstop = () => finishRecording();
+    recorder.start();
+    dictation.recorder = recorder;
+    $("mic").classList.add("recording");
+    status("Ich hoere zu.");
+  } catch (error) {
+    dictation.stream = null;
+    status(`Das Mikrofon ist nicht zu erreichen: ${error.message}`, "error");
+  }
+}
+
+/** Stop the recording. */
+function stopRecording() {
+  if (!dictation.recorder) return;
+  dictation.recorder.stop();
+  dictation.recorder = null;
+  $("mic").classList.remove("recording");
+}
+
+/** The sound goes to the server, the words come back. */
+async function finishRecording() {
+  if (dictation.stream) {
+    dictation.stream.getTracks().forEach((track) => track.stop());
+    dictation.stream = null;
+  }
+  if (!dictation.chunks.length) return;
+
+  dictation.busy = true;
+  status("Ich schreibe mit ...");
+  try {
+    const blob = new Blob(dictation.chunks, { type: "audio/webm" });
+    const arrayBuffer = await blob.arrayBuffer();
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const context = new AudioContextClass();
+    const decoded = await context.decodeAudioData(arrayBuffer);
+    const wave = toWave(decoded);
+    await context.close();
+
+    const result = await api("/dictate", {
+      method: "POST",
+      body: JSON.stringify({ audio: toBase64(wave) }),
+    });
+    const text = (result.text || "").trim();
+    if (!text) {
+      status("Ich habe nichts verstanden - bitte noch einmal.");
+      return;
+    }
+    status("");
+    // **The words go to the model like a typed question.**
+    await send(text);
+  } catch (error) {
+    status(`Die Spracheingabe ist fehlgeschlagen: ${error.message}`, "error");
+  } finally {
+    dictation.busy = false;
+    dictation.chunks = [];
+  }
+}
+
 async function start() {
   $("power").addEventListener("click", togglePower);
   renderPower();
@@ -862,6 +1152,17 @@ async function start() {
     status(error.message, "error");
   }
 
+  // **The microphone appears when the app can hear.** A button that
+  // does nothing is worse than no button.
+  try {
+    const status = await api("/status");
+    if (status.dictation && status.dictation.available) {
+      $("mic").hidden = false;
+    }
+  } catch (error) {
+    // **No ear, no button.** The app still works.
+  }
+
   say("Cpt Mem0 ist bereit. Alles, was du mir sagst, wird gemerkt.",
       "system");
   say("Die Themen oben füllen sich aus dem Store. Die grossen Tasten " +
@@ -874,6 +1175,33 @@ async function start() {
     const text = input.value;
     input.value = "";
     await send(text);
+  });
+
+  // **The microphone.** It appears only when the app can hear.
+  $("mic").addEventListener("click", () => {
+    if (dictation.recorder) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  });
+
+  // **The web for the assistant.** Off until the user says so -
+  // and the window shows what was asked, so nothing leaves the
+  // machine unnoticed.
+  bindToggle("web", async (next) => {
+    try {
+      await api("/settings/web", {
+        method: "POST",
+        body: JSON.stringify({ value: next }),
+      });
+      status(next
+        ? "Der Assistent darf jetzt im Web suchen. Was er fragt, "
+          + "steht in der Unterhaltung."
+        : "Kein Webzugriff. Der Assistent antwortet aus seinem Wissen.");
+    } catch (error) {
+      status(error.message, "error");
+    }
   });
 
   bindToggle("voice", async (next) => {
@@ -922,7 +1250,7 @@ async function start() {
   // whatever the HTML said, and the state came back from the server
   // on every start.
   api("/settings").then((settings) => {
-    for (const name of ["autostart", "voice"]) {
+    for (const name of ["autostart", "voice", "web"]) {
       const button = $(name);
       if (button) {
         button.setAttribute("aria-checked",
@@ -938,34 +1266,80 @@ async function start() {
   // window, and it can freeze the interface. So the button asks
   // twice - the first click arms it, the second one wipes. Six
   // seconds without a second click and it disarms itself.
-  let wipeArmed = false;
-  let wipeTimer = null;
+  //
+  // So it asks with a window of its own - with the number of what
+  // is lost in it, and with the way out.
   $("wipe").addEventListener("click", async () => {
-    const button = $("wipe");
-    if (!wipeArmed) {
-      wipeArmed = true;
-      button.textContent = "Wirklich alle löschen?";
-      button.classList.add("armed");
-      status("Noch ein Klick löscht alle Erinnerungen. Das geht nicht "
-             + "rückgängig.", "error");
-      if (wipeTimer) clearTimeout(wipeTimer);
-      wipeTimer = setTimeout(() => {
-        wipeArmed = false;
-        button.textContent = "Alle Erinnerungen löschen";
-        button.classList.remove("armed");
-      }, 6000);
-      return;
+    const dialog = $("wipe-dialog");
+    const hint = $("wipe-hint");
+    if (!dialog) return;
+    try {
+      const data = await api("/status");
+      const count = data.memories ?? 0;
+      hint.textContent = count
+        ? `${count} Erinnerungen werden gelöscht. Das geht nicht `
+          + "rückgängig - außer mit einer Sicherung."
+        : "Der Store ist bereits leer.";
+    } catch (error) {
+      hint.textContent = error.message;
     }
+    dialog.showModal();
+  });
 
-    wipeArmed = false;
-    if (wipeTimer) clearTimeout(wipeTimer);
-    button.textContent = "Alle Erinnerungen löschen";
-    button.classList.remove("armed");
+  $("wipe-confirm").addEventListener("click", async () => {
+    const dialog = $("wipe-dialog");
+    const button = $("wipe-confirm");
+    button.disabled = true;
     try {
       await api("/memories/reset", { method: "DELETE" });
+      dialog.close();
       say("Der Store ist leer.", "system");
       await refresh();
       await refreshTopics();
+    } catch (error) {
+      status(error.message, "error");
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("wipe-cancel").addEventListener("click", () => {
+    $("wipe-dialog").close();
+  });
+
+  // **The state of the store, saved.** The file goes to the machine
+  // of the user, with the day in its name.
+  $("backup").addEventListener("click", async () => {
+    try {
+      const result = await api("/store/export", { method: "POST" });
+      if (result.ok) {
+        status(`Gesichert: ${result.path}`);
+        say(`Der Stand ist gesichert - ${result.memories} Erinnerungen.`,
+            "system");
+      } else {
+        status(result.error || "das Sichern hat nicht geklappt", "error");
+      }
+    } catch (error) {
+      status(error.message, "error");
+    }
+  });
+
+  $("restore").addEventListener("click", async () => {
+    const path = window.prompt(
+      "Welche Datei soll geladen werden? (Pfad der Sicherung)");
+    if (!path) return;
+    try {
+      const result = await api("/store/import", {
+        method: "POST",
+        body: JSON.stringify({ path }),
+      });
+      if (result.ok) {
+        status(`${result.added} Erinnerungen geladen.`);
+        await refresh();
+        await refreshTopics();
+      } else {
+        status(result.error || "das Laden hat nicht geklappt", "error");
+      }
     } catch (error) {
       status(error.message, "error");
     }

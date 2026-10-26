@@ -43,6 +43,9 @@ REQUIREMENTS = [
     # be reached, and the app says so instead of speaking. The
     # package has to be here - the build installs what the app needs.
     "pywin32>=306",
+    # **The neural voice.** It runs on the processor, needs no
+    # graphics card, and the model of it is downloaded on demand.
+    "piper-tts>=1.3",
 ]
 
 #: The build tool. It is not a dependency of the app.
@@ -78,12 +81,147 @@ def read_version() -> str:
     return "0.0.0"
 
 
+#: The voice of the app. The model is 109 MB, and it is part of
+#: the program - the user does not download a voice, he installs an
+#: app that has one.
+#:
+#: The file is too big for the repository, so the build gets it from
+#: the same place the models come from.
+VOICE_FILES = {
+    "de_DE-thorsten-high.onnx":
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/de/"
+        "de_DE/thorsten/high/de_DE-thorsten-high.onnx",
+    "de_DE-thorsten-high.onnx.json":
+        "https://huggingface.co/rhasspy/piper-voices/resolve/main/de/"
+        "de_DE/thorsten/high/de_DE-thorsten-high.onnx.json",
+}
+
+
+def get_voices() -> Path:
+    """The model of the voice, ready to be packed."""
+    folder = ROOT / "packaging" / "voices"
+    folder.mkdir(parents=True, exist_ok=True)
+    import urllib.request
+
+    for name, url in VOICE_FILES.items():
+        target = folder / name
+        if target.is_file() and target.stat().st_size > 0:
+            print(f"   {name} ist da ({target.stat().st_size} B)",
+                  flush=True)
+            continue
+        print(f"   {name} wird geholt ...", flush=True)
+        request = urllib.request.Request(
+            url, headers={"User-Agent": "cpt-mem0-build"})
+        with urllib.request.urlopen(request, timeout=600) as response:
+            target.write_bytes(response.read())
+    return folder
+
+
+#: The ear of the assistant. whisper.cpp turns the sound of the
+#: headset into words, and the model of German speech belongs to it.
+#:
+#: Both are part of the package - the user installs the app and can
+#: talk to it. Nothing is downloaded at runtime.
+#:
+#: **The card does the hearing.** On the processor a sentence takes
+#: four and a half seconds, on the card two tenths - and the card
+#: has room: the model of the speech is 190 MB.
+WHISPER_BINARY = (
+    "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/"
+    "whisper-bin-win-cuda-11.8.0-x64.zip")
+WHISPER_MODEL = (
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
+    "ggml-small-q5_1.bin")
+
+#: The CUDA libraries of NVIDIA. whisper.cpp brings the program, but
+#: not the libraries of the card - without them the program falls
+#: back to the processor.
+WHISPER_CUBLAS = "https://pypi.org/pypi/nvidia-cublas-cu11/json"
+
+#: Only what is needed to read a wave file.
+WHISPER_FILES = [
+    "whisper-server.exe", "whisper.dll", "llama.dll", "ggml.dll",
+    "ggml-cuda.dll", "ggml-base.dll", "ggml-cpu-x64.dll", "SDL2.dll",
+    "cudart64_110.dll", "cuinj64_118.dll", "nvrtc64_112_0.dll",
+    "nvrtc-builtins64_118.dll",
+]
+
+
+def get_whisper() -> Path:
+    """The program and the model for the dictation."""
+    folder = ROOT / "packaging" / "whisper"
+    folder.mkdir(parents=True, exist_ok=True)
+
+    binary = folder / "whisper-server.exe"
+    if not binary.is_file():
+        print("   whisper.cpp wird geholt ...", flush=True)
+        import io
+        import urllib.request
+        import zipfile
+
+        request = urllib.request.Request(
+            WHISPER_BINARY, headers={"User-Agent": "cpt-mem0-build"})
+        with urllib.request.urlopen(request, timeout=600) as response:
+            blob = response.read()
+        with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+            for name in archive.namelist():
+                short = name.rsplit("/", 1)[-1]
+                if short in WHISPER_FILES:
+                    target = folder / short
+                    target.write_bytes(archive.read(name))
+    else:
+        print("   whisper.cpp ist da", flush=True)
+
+    # **The CUDA libraries.** They come in a wheel of NVIDIA, and
+    # the two files are taken out of it.
+    cublas = folder / "cublas64_11.dll"
+    if not cublas.is_file():
+        print("   die CUDA-Bibliotheken werden geholt ...", flush=True)
+        import json
+        import urllib.request
+        import zipfile
+
+        request = urllib.request.Request(
+            WHISPER_CUBLAS, headers={"User-Agent": "cpt-mem0-build"})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            data = json.loads(response.read().decode("utf-8"))
+        wheel = next(f for f in data["urls"] if "win" in f["filename"])
+        request = urllib.request.Request(
+            wheel["url"], headers={"User-Agent": "cpt-mem0-build"})
+        with urllib.request.urlopen(request, timeout=1800) as response:
+            blob = response.read()
+        with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+            for name in archive.namelist():
+                short = name.rsplit("/", 1)[-1]
+                if short in ("cublas64_11.dll", "cublasLt64_11.dll"):
+                    (folder / short).write_bytes(archive.read(name))
+
+    model = folder / WHISPER_MODEL.rsplit("/", 1)[-1]
+    if not model.is_file():
+        print("   das Sprachmodell wird geholt (190 MB) ...", flush=True)
+        import urllib.request
+
+        request = urllib.request.Request(
+            WHISPER_MODEL, headers={"User-Agent": "cpt-mem0-build"})
+        with urllib.request.urlopen(request, timeout=900) as response:
+            model.write_bytes(response.read())
+    else:
+        print("   das Sprachmodell ist da", flush=True)
+    return folder
+
+
 def build() -> Path:
     """Build the package and return the folder."""
     print("== cleaning ==", flush=True)
     for folder in (DIST, BUILD):
         if folder.exists():
             shutil.rmtree(folder)
+
+    print("== getting the voice ==", flush=True)
+    get_voices()
+
+    print("== getting the ear ==", flush=True)
+    get_whisper()
 
     print("== installing the dependencies ==", flush=True)
     run([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])

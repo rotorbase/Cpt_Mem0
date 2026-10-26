@@ -239,7 +239,11 @@ class Engine:
         self.user_id = user_id
         self._memory: Any = None
         #: How fast the last answer came, in tokens per second.
-        self.last_tokens_per_second: float = 0.0
+        self.last_tokens_per_second = 0.0
+        #: **What the model asked the web for.** The window shows it.
+        self.last_web_calls: list[dict[str, Any]] = []
+        #: **What the model asked the web for.** The window shows it.
+        self.last_web_calls: list[dict[str, Any]] = []
 
     def open(self) -> None:
         """Open the store and build the mem0 instance.
@@ -365,7 +369,8 @@ class Engine:
             memories: list[str] | None = None,
             history: list[dict[str, str]] | None = None,
             max_tokens: int = 800,
-            temperature: float = 0.7) -> str:
+            temperature: float = 0.7,
+            tools: bool = False) -> str:
         """Ask the model and get an answer.
 
         **This is the inference.** The model on the card has two
@@ -384,6 +389,26 @@ class Engine:
             lines = "\n".join(f"- {item}" for item in memories)
             system += (f"\n\nWhat you know about this person:\n{lines}")
 
+        # **The tools.** The model does not have the internet - it
+        # is a file of weights. But it can ask the app for something
+        # from the web, and the app goes and gets it. The switch
+        # belongs to the user, and without it the model is asked
+        # without tools and answers out of what it knows.
+        tool_list = None
+        if tools:
+            from . import web
+
+            tool_list = web.TOOLS
+            system += (
+                "\n\n**You have a web tool.** When a question needs "
+                "facts you do not have - something recent, a price, a "
+                "version, anything the user says is wrong - call "
+                "web_search first, and web_fetch when the snippet is "
+                "not enough. Say what you found and where it came "
+                "from. When you do not call the tool, the answer is "
+                "out of your own knowledge."
+            )
+
         # **The conversation comes first.** Without the history every
         # question stands alone, and a chat where every question
         # stands alone is not a chat. The window sends the last turns
@@ -399,13 +424,17 @@ class Engine:
             messages.append({"role": role, "content": content})
         messages.append({"role": "user", "content": text})
 
-        payload = json.dumps({
+        payload_data: dict[str, Any] = {
             "model": endpoint.model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": False,
-        }).encode("utf-8")
+        }
+        if tool_list:
+            payload_data["tools"] = tool_list
+            payload_data["tool_choice"] = "auto"
+        payload = json.dumps(payload_data).encode("utf-8")
         request = urllib.request.Request(
             endpoint.url("/chat/completions"), data=payload,
             headers={"Content-Type": "application/json",
@@ -414,24 +443,72 @@ class Engine:
         # **How fast.** The time is measured here and not taken from
         # the server, because the server does not always report it -
         # and the number on the cockpit has to be there every time.
-        started = time.monotonic()
-        try:
-            with urllib.request.urlopen(request, timeout=300) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:400]
-            raise EngineError(
-                f"the model refused the request ({exc.code}): {detail}"
-            ) from exc
-        except Exception as exc:
-            raise EngineError(
-                f"the model did not answer: {exc}") from exc
+        # **The loop with the tools.** The model may answer at once,
+        # or it may ask for a search. Then the app does what it asked
+        # for, and the model answers with the answer in front of it.
+        # Three rounds are enough - a model that asks for a fourth
+        # time is lost, and the user waits.
+        from . import web
 
-        self.last_tokens_per_second = _tokens_per_second(body, started)
-        choices = body.get("choices") or []
-        if not choices:
-            return ""
-        message = choices[0].get("message") or {}
+        started = time.monotonic()
+        for _round in range(3):
+            payload = json.dumps(payload_data).encode("utf-8")
+            request = urllib.request.Request(
+                endpoint.url("/chat/completions"), data=payload,
+                headers={"Content-Type": "application/json",
+                         "Authorization": f"Bearer {endpoint.api_key}"},
+                method="POST")
+            try:
+                with urllib.request.urlopen(request, timeout=300) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")[:400]
+                raise EngineError(
+                    f"the model refused the request ({exc.code}): {detail}"
+                ) from exc
+            except Exception as exc:
+                raise EngineError(
+                    f"the model did not answer: {exc}") from exc
+
+            self.last_tokens_per_second = _tokens_per_second(body, started)
+            choices = body.get("choices") or []
+            if not choices:
+                return ""
+            message = choices[0].get("message") or {}
+
+            calls = message.get("tool_calls") or []
+            if not calls or not tool_list:
+                return str(message.get("content") or "").strip()
+
+            # **What the model asked for.** The app does it and hands
+            # the answer back.
+            messages.append({
+                "role": "assistant",
+                "content": str(message.get("content") or ""),
+                "tool_calls": calls,
+            })
+            for call in calls[:2]:
+                function = call.get("function") or {}
+                name = str(function.get("name") or "")
+                raw = str(function.get("arguments") or "{}")
+                try:
+                    arguments = json.loads(raw) if raw.strip() else {}
+                except ValueError:
+                    arguments = {}
+                try:
+                    answer = web.run(name, arguments)
+                except Exception as error:  # noqa: BLE001
+                    answer = f"Das Werkzeug ist fehlgeschlagen: {error}"
+                self.last_web_calls.append({"tool": name,
+                                            "arguments": arguments})
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": str(call.get("id") or ""),
+                    "name": name,
+                    "content": str(answer)[:6000],
+                })
+            payload_data["messages"] = messages
+
         return str(message.get("content") or "").strip()
 
 

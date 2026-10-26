@@ -130,7 +130,8 @@ class MemoryService:
         }
 
     def chat(self, text: str, user_id: str | None = None,
-             history: list[dict[str, str]] | None = None) -> dict[str, Any]:
+             history: list[dict[str, str]] | None = None,
+             tools: bool = False) -> dict[str, Any]:
         """Answer the user and remember the conversation.
 
         **This is the whole thing.** The model answers - that is the
@@ -156,7 +157,8 @@ class MemoryService:
         # **The thread goes with it.** The model sees the last turns,
         # so the second question of a conversation can refer to the
         # first answer.
-        answer = self.engine.ask(text, memories, history=history)
+        answer = self.engine.ask(text, memories, history=history,
+                                 tools=tools)
 
         # **The communication goes into the store.** Both sides: what
         # the user said and what came back.
@@ -175,6 +177,9 @@ class MemoryService:
             "stored": _count_of(stored),
             "results": _results_of(stored),
             "used_memories": len(memories),
+            #: **What the model asked the web for.** The window shows
+            #: it, so the user sees what left the machine.
+            "web_calls": list(getattr(self.engine, "last_web_calls", [])),
         }
 
     def recall(self, query: str, user_id: str | None = None,
@@ -230,6 +235,24 @@ class MemoryService:
         """
         self.engine.reset()
         return {"ok": True, "reset": True}
+
+
+def _dictation_status() -> dict[str, Any]:
+    """Whether the app can hear, and why not when it cannot.
+
+    **A status that fails is a status that says no.** The window asks
+    for it on every tick, and a broken answer must not take the whole
+    window down with it.
+    """
+    try:
+        from . import dictation
+
+        status = dictation.status()
+        return {"available": bool(status.get("available")),
+                "reason": str(status.get("reason") or "")}
+    except Exception:  # noqa: BLE001
+        return {"available": False,
+                "reason": "Die Spracheingabe ist nicht verfügbar"}
 
 
 def _count_of(result: dict[str, Any]) -> int:
@@ -534,6 +557,17 @@ class Daemon:
         self.service = None
 
         self.supervisor.stop_all()
+
+        # **The ear goes quiet too.** The recognition is a program of
+        # its own, and it would stay on the card after the app is
+        # gone.
+        try:
+            from . import dictation
+
+            dictation.stop()
+        except Exception:  # noqa: BLE001
+            pass
+
         self._remove_pid_file()
 
     def run_forever(self) -> None:
@@ -679,10 +713,13 @@ class Daemon:
 
         from .voice import Speaker
 
-        name = str(self.settings_data.get("voice_name") or "")
+        # **One voice.** The app has one, and it is the neural one.
+        # A setting from an older version that names a voice of
+        # Windows is ignored - it would only make the app silent.
+        from .voice import DEFAULT_VOICE
+
+        name = DEFAULT_VOICE
         if self._speaker is None or self._voice_name != name:
-            # **A new voice means a new speaker** - the SAPI object
-            # holds the voice it was given.
             self._speaker = Speaker(name=name)
             self._voice_name = name
         spoken = self._speaker.speak(text)
@@ -786,7 +823,7 @@ class Daemon:
             "available": status["available"],
             "reason": status["reason"],
             "voices": status["voices"],
-            "selected": self.settings_data.get("voice_name"),
+            "selected": "Piper Thorsten",
         }
 
     def settings(self) -> dict[str, Any]:
@@ -815,6 +852,24 @@ class Daemon:
             #: **Why the voice stayed silent.** A switch that
             #: switches nothing is worse than no switch.
             "voice_error": getattr(self, "_voice_error", ""),
+            #: **The voice that is used.** The neural one - the
+            #: voices of Windows are not offered any more.
+            "voice_name": "Piper Thorsten",
+            #: **Whether the app can hear.** The window shows the
+            #: microphone only when it is there.
+            "dictation": _dictation_status(),
+            #: **The web for the assistant.** Off until the user
+            #: switches it on - an app that keeps everything on the
+            #: machine and then quietly asks the internet is
+            #: something else than what was promised.
+            "web": bool(self.settings_data.get("web", False)),
+            #: **The names the user gave the topics.** The topics
+            #: have fixed names, and the user may give them others.
+            "topic_names": dict(self.settings_data.get("topic_names", {})),
+            #: **Where the user put a memory.** A fact that the
+            #: model filed under the wrong topic stays there.
+            "topic_assignments": dict(
+                self.settings_data.get("topic_assignments", {})),
             #: Where the user keeps the models.
             "model_folder": (self.settings_data.get("model_folder")
                              or (str(self.config.llm.model_folder)
@@ -915,7 +970,7 @@ class Daemon:
         """
         if name not in ("autostart", "voice", "winamp", "model", "theme",
                         "favourites", "voice_name", "voice-name",
-                        "model_folder", "model-folder"):
+                        "model_folder", "model-folder", "web"):
             raise ApiError(f"unknown setting: {name}")
 
         if name == "autostart":
@@ -924,10 +979,10 @@ class Daemon:
         elif name == "voice":
             self.settings_data["voice"] = bool(value)
             if bool(value):
-                # **A sound, right now.** The user switches the voice
-                # on to hear the voice - and if it stays silent, the
-                # switch is broken. The window has to learn what
-                # happened, and not only that the switch is on.
+                # **The voice is fetched when it is wanted.** The
+                # model is 109 MB and it is not in the package - so
+                # the first switch starts the download, and the
+                # voice speaks as soon as it is there.
                 self.speak("Sprachausgabe aktiv.")
             self._save_settings()
         elif name in ("model", "model-folder", "model_folder"):
@@ -938,11 +993,13 @@ class Daemon:
             # then gone on the next start.
             return self._set_model(name, value)
         elif name in ("voice_name", "voice-name"):
-            # **Which voice speaks.** The names come from Windows.
-            self.settings_data["voice_name"] = str(value) if value else ""
+            # **One voice.** The choice is made - the app has the
+            # neural one and nothing else.
+            from .voice import DEFAULT_VOICE
+
+            self.settings_data["voice_name"] = DEFAULT_VOICE
             self._save_settings()
-            return {"ok": True,
-                    "voice_name": self.settings_data["voice_name"]}
+            return {"ok": True, "voice_name": DEFAULT_VOICE}
         elif name == "theme":
             # **A name, not a flag.** There are four interfaces, and
             # the window says which one it wants.
@@ -1066,7 +1123,8 @@ class Daemon:
         and the store, but not the switches of the window - and the
         switch for the voice is one of them.
         """
-        result = self.service.chat(text, user_id, history=history)
+        result = self.service.chat(text, user_id, history=history,
+                                   tools=bool(self.settings_data.get("web")))
         # **The answer is spoken, not the summary of the facts.** The
         # user asked a question and got an answer - the voice says
         # the answer.
@@ -1130,6 +1188,228 @@ class Daemon:
             "facts": len(entries),
         }
 
+    def dictate(self, audio: str) -> dict[str, Any]:
+        """Turn the sound of the headset into words.
+
+        **The recognition runs here, on the machine.** The window
+        sends the recording, this runs whisper.cpp over it, and the
+        words go back to the window.
+        """
+        from . import dictation
+
+        if not dictation.available():
+            raise ApiError("Die Spracheingabe ist in diesem Build nicht "
+                           "enthalten", 503)
+        try:
+            text = dictation.transcribe_base64(audio)
+        except ApiError:
+            raise
+        except Exception as error:  # noqa: BLE001
+            raise ApiError(f"Die Spracheingabe ist fehlgeschlagen: {error}",
+                           500) from error
+        return {"ok": True, "text": text}
+
+    def voice_catalogue(self) -> dict[str, Any]:
+        """The voices the user can pick, and which of them are there.
+
+        **A voice that is not on the disk cannot be picked.** The
+        neural one is 109 MB, and it is downloaded when the user
+        asks for it.
+        """
+        from . import piper_voice
+        from .voice import voices
+
+        # **The voice is part of the program.** There is nothing to
+        # download, and nothing that is missing.
+        return {"voices": voices(), "downloadable": [],
+                "selected": "Piper Thorsten"}
+
+    def download_voice(self, name: str) -> dict[str, Any]:
+        """Get a voice onto the disk.
+
+        **The download runs in a thread.** 109 MB take a while, and
+        the window may not freeze while they come.
+        """
+        import threading
+
+        from . import piper_voice
+
+        if not piper_voice.available():
+            return {"ok": False,
+                    "error": "die Stimme von Piper ist nicht im Paket"}
+
+        def run() -> None:
+            try:
+                piper_voice.download(name)
+            except Exception as error:  # noqa: BLE001
+                self._log_event("voice", f"der Download fehlgeschlagen: {error}")
+
+        threading.Thread(target=run, daemon=True).start()
+        return {"ok": True, "name": name, "started": True}
+
+    def export_store(self) -> dict[str, Any]:
+        """The state of the store, as a file the user keeps.
+
+        **The memories and the decisions.** A backup without the
+        names the user gave the topics and without the facts he put
+        where he wants them is half a backup - the rest is the
+        state of the store.
+
+        The file is written where the user can find it: in the
+        documents of the machine, with the day in the name.
+        """
+        import json
+        from datetime import datetime
+
+        from .install import data_dir
+
+        items: list[Any] = []
+        try:
+            memories = self.service.list_all()
+            found = (memories.get("results")
+                     if isinstance(memories, dict) else memories)
+            items = list(found or [])
+        except Exception:  # noqa: BLE001
+            try:
+                items = list(self.engine.all() if self.engine else [])
+            except Exception:  # noqa: BLE001
+                items = []
+
+        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        target = (data_dir() / "backups").resolve()
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / f"cpt-mem0_{stamp}.json"
+
+        payload = {
+            "created": datetime.now().isoformat(timespec="seconds"),
+            "version": 1,
+            "memories": items,
+            "topic_names": dict(self.settings_data.get("topic_names", {})),
+            "topic_assignments": dict(
+                self.settings_data.get("topic_assignments", {})),
+        }
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=1),
+                        encoding="utf-8")
+        return {"ok": True, "path": str(path),
+                "memories": len(items),
+                "size": path.stat().st_size}
+
+    def import_store(self, path: str) -> dict[str, Any]:
+        """Read a backup back into the store.
+
+        **The facts that are already there are left alone.** A
+        backup that is loaded twice does not double the store.
+        """
+        import json
+        from pathlib import Path as _Path
+
+        source = _Path(str(path or "")).expanduser()
+        if not source.is_file():
+            return {"ok": False, "error": "die Datei gibt es nicht"}
+        try:
+            payload = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            return {"ok": False, "error": f"die Datei ist unlesbar: {error}"}
+
+        items = payload.get("memories") or []
+        added = 0
+        for item in items:
+            text = str(item.get("memory") or item.get("data") or "").strip()
+            if not text:
+                continue
+            try:
+                self.engine.remember(text)
+                added += 1
+            except Exception:  # noqa: BLE001
+                continue
+
+        for key, value in (payload.get("topic_names") or {}).items():
+            self.settings_data.setdefault("topic_names", {})[str(key)] = str(value)
+        for key, value in (payload.get("topic_assignments") or {}).items():
+            self.settings_data.setdefault("topic_assignments", {})[str(key)] = str(value)
+        self._save_settings()
+        return {"ok": True, "added": added, "path": str(source)}
+
+    def rename_topic(self, topic: str, name: str) -> dict[str, Any]:
+        """Give a topic another name.
+
+        **The name of the user wins.** The topics have fixed names so
+        that the buttons stay recognisable - but a name the user
+        chose is his, and the model has no say in it.
+        """
+        topic = str(topic or "").strip()
+        name = str(name or "").strip()
+        if not topic:
+            return {"ok": False, "error": "no topic given"}
+        if not name:
+            return {"ok": False, "error": "no name given"}
+        if len(name) > 40:
+            return {"ok": False, "error": "the name is too long"}
+
+        names = dict(self.settings_data.get("topic_names", {}))
+        names[topic] = name
+        self.settings_data["topic_names"] = names
+        self._save_settings()
+        return {"ok": True, "topic": topic, "name": name}
+
+    def move_memory(self, fact: str, topic: str) -> dict[str, Any]:
+        """Put a memory under another topic.
+
+        **The decision of the user is remembered.** The model files
+        the facts where it thinks they belong, and it is sometimes
+        wrong. The user puts it where it belongs, and it stays there.
+        """
+        fact = str(fact or "").strip()
+        topic = str(topic or "").strip()
+        if not fact or not topic:
+            return {"ok": False, "error": "the fact or the topic is missing"}
+
+        assignments = dict(self.settings_data.get("topic_assignments", {}))
+        assignments[fact] = topic
+        self.settings_data["topic_assignments"] = assignments
+        self._save_settings()
+        return {"ok": True, "fact": fact, "topic": topic}
+
+    def suggest_topic_name(self, topic: str,
+                            facts: list[str]) -> dict[str, Any]:
+        """Ask the model for a name for the topic.
+
+        **The model proposes, the user decides.** The name goes into
+        the window as a suggestion, and it is saved only when the
+        user says so.
+        """
+
+        topic = str(topic or "").strip()
+        if not topic:
+            return {"ok": False, "error": "no topic given"}
+        if self.suspended:
+            return {"ok": False,
+                    "error": "the models are off - the name comes from you"}
+
+        described = "\n".join(f"- {fact}" for fact in (facts or [])[:8])
+        prompt = (
+            "Diese Fakten liegen in einem Thema. Wie heisst das Thema "
+            "fuer den Nutzer?\n\n"
+            "Antworte mit **einem oder zwei deutschen Woertern**, sonst "
+            "nichts. Der Name steht auf einem kleinen Knopf.\n\n"
+            "Beispiele:\n"
+            "- Fakten ueber das Reiten mit dem Rad → Radfahren\n"
+            "- Fakten ueber Reisen ans Meer → Urlaub\n"
+            "- Fakten ueber den Rechner des Nutzers → Rechner\n\n"
+            f"{described}"
+        )
+        try:
+            answer = self._ask_llm(prompt)
+        except Exception as error:  # noqa: BLE001
+            return {"ok": False, "error": str(error)}
+        if not answer:
+            return {"ok": False, "error": "the model did not answer"}
+
+        name = str(answer).strip().strip('"').splitlines()[0].strip()
+        if not name or len(name) > 40:
+            return {"ok": False, "error": "the answer is not a name"}
+        return {"ok": True, "topic": topic, "name": name}
+
     def topic_board(self) -> dict[str, Any]:
         """The eighteen topics, and what is stored in each of them.
 
@@ -1161,6 +1441,17 @@ class Daemon:
         else:
             assignment = assign_to_taxonomy(clusters)
 
+        # **What the user decided comes first.** A fact that the
+        # model filed under the wrong topic stays where the user
+        # put it.
+        stored = {str(key): str(value)
+                  for key, value in
+                  self.settings_data.get("topic_assignments", {}).items()}
+        for entry in clusters:
+            for fact in entry.facts:
+                if fact in stored:
+                    assignment[clusters.index(entry)] = stored[fact]
+
         # **What is in each topic.** The groups of facts that were
         # filed under it, each with its own label - the sub-theme.
         content: dict[str, list[dict[str, Any]]] = {}
@@ -1184,6 +1475,9 @@ class Daemon:
         colours = palette(len(ordered))
         backgrounds = fills(len(ordered))
 
+        given = {str(key): str(value) for key, value
+                 in self.settings_data.get("topic_names", {}).items()}
+
         topics = []
         for index, topic in enumerate(ordered):
             name = str(topic["name"])
@@ -1191,6 +1485,8 @@ class Daemon:
             facts = [fact for part in parts for fact in part["facts"]]
             topics.append({
                 "name": name,
+                #: **The name the user gave it.**
+                "label": given.get(name, name),
                 "group": str(topic["group"]),
                 "count": len(facts),
                 "colour": colours[index],
@@ -1350,8 +1646,31 @@ class Daemon:
             "tokens_per_second": round(
                 getattr(self.engine, "last_tokens_per_second", 0.0) or 0.0, 1),
             "gpu_name": self._gpu_name(),
-            "gpu_percent": gpu_utilisation(),
+            # **The load of the task manager.** The cockpit and the task
+        # manager have to show the same number - otherwise the user
+        # compares two different things and wonders which one is
+        # wrong. The shader cores of nvidia-smi are a different
+        # measurement: for a card that computes with CUDA they are
+        # far apart from the 3D line the task manager shows.
+        "gpu_percent": self._load().get("gpu_percent"),
+        "cpu_percent": self._load().get("cpu_percent"),
+        #: The load of the shader cores - the other measurement, for
+        #: the record.
+        "sm_percent": gpu_utilisation(),
         }
+
+    def _load(self) -> dict[str, int | None]:
+        """The last measurement of the load of the machine.
+
+        **The thread measures, the answer is read.** Asking Windows
+        for the load of the GPU takes a second and a half, and the
+        window asks for the status every few seconds.
+        """
+        from .hardware import LOAD
+
+        if not LOAD._thread:
+            LOAD.start()
+        return LOAD.read()
 
     def _gpu_name(self) -> str:
         """The name of the card."""
@@ -1395,6 +1714,9 @@ class Daemon:
             "memories": count,
             "warnings": warnings,
             "runtime_error": self._runtime_error,
+            #: **Whether the app can hear.** The window shows the
+            #: microphone only when it is there.
+            "dictation": _dictation_status(),
         }
 
 
@@ -1532,15 +1854,14 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     self._send(200, daemon.models())
                     return
 
-                if path in ("/settings/voices", "/v1/settings/voices"):
-                    # **The voices of the machine.** The user picks
-                    # one - Windows has a voice per language, and the
-                    # German one is not always installed.
-                    self._send(200, daemon.voice_status())
-                    return
-
                 if path in ("/topic-board", "/v1/topic-board"):
                     self._send(200, daemon.topic_board())
+                    return
+
+                if path in ("/settings/voices", "/v1/settings/voices"):
+                    # **The voices of the machine** and the ones that
+                    # can be downloaded.
+                    self._send(200, daemon.voice_catalogue())
                     return
 
                 if path in ("/plan", "/v1/plan"):
@@ -1608,6 +1929,13 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
                     self._send(200, result)
                     return
 
+                if path == "/dictate":
+                    # **The sound of the headset.** The window sends
+                    # the recording, this makes words out of it.
+                    result = daemon.dictate(str(body.get("audio") or ""))
+                    self._send(200, result)
+                    return
+
                 if path in ("/chat", "/v1/chat"):
                     # **The chat.** The model answers, and the exchange
                     # goes into the memory.
@@ -1637,6 +1965,36 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
 
                 if path in ("/settings", "/v1/settings"):
                     self._send(200, daemon.settings())
+                    return
+
+                if path in ("/voices/download", "/v1/voices/download"):
+                    self._send(200, daemon.download_voice(body.get("name")))
+                    return
+
+                if path in ("/store/export", "/v1/store/export"):
+                    self._send(200, daemon.export_store())
+                    return
+
+                if path in ("/store/import", "/v1/store/import"):
+                    self._send(200, daemon.import_store(body.get("path")))
+                    return
+
+                if path in ("/topics/rename", "/v1/topics/rename"):
+                    self._send(200, daemon.rename_topic(
+                        body.get("topic"), body.get("name")))
+                    return
+
+                if path in ("/topics/move", "/v1/topics/move"):
+                    self._send(200, daemon.move_memory(
+                        body.get("fact"), body.get("topic")))
+                    return
+
+                if path in ("/topics/suggest", "/v1/topics/suggest"):
+                    facts = body.get("facts")
+                    self._send(200, daemon.suggest_topic_name(
+                        body.get("topic"),
+                        [str(fact) for fact in facts] if isinstance(facts, list)
+                        else []))
                     return
 
                 if path.startswith("/settings/"):

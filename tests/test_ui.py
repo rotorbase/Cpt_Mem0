@@ -166,16 +166,18 @@ class TestTheUserInterface:
         assert 'id="tree-dialog"' in html
         assert 'id="open-tree"' in html
 
-    def test_the_wipe_asks_twice(self):
+    def test_the_wipe_asks_in_a_window(self):
         """One click must not empty the store.
 
         `confirm()` is a native dialog, and in the packaged app it
         does not belong to the window: the interface can freeze on
-        it. So the button asks twice.
+        it. So the app has a window of its own for it - with the
+        number of what is lost in it.
         """
         script = (UI_DIR / "app.js").read_text(encoding="utf-8")
         assert "confirm(" not in script
-        assert "Wirklich alle löschen?" in script
+        assert "wipe-dialog" in script
+        assert "wipe-hint" in script
 
     def test_the_index_has_the_wipe_button(self):
         """Everything has to be deletable."""
@@ -830,4 +832,31 @@ class TestTheTopicBoardRoute:
             assert topic["group"] in ("Alltag", "Interessen", "Umfeld")
             assert "count" in topic
             assert "subtopics" in topic
+
+
+class TestTheNewWindowPieces:
+    """The window for the names, the moving and the backup."""
+
+    def test_the_wipe_asks_in_a_window(self):
+        """Not with a question box of the browser - with a window of
+        the app, and with the number of what is lost in it."""
+        script = (UI_DIR / "app.js").read_text(encoding="utf-8")
+        assert "wipe-dialog" in script
+        assert "wipe-confirm" in script
+        html = (UI_DIR / "index.html").read_text(encoding="utf-8")
+        assert 'id="wipe-dialog"' in html
+        assert 'id="wipe-hint"' in html
+
+    def test_the_state_can_be_saved(self):
+        script = (UI_DIR / "app.js").read_text(encoding="utf-8")
+        assert "/store/export" in script
+        assert "/store/import" in script
+        html = (UI_DIR / "index.html").read_text(encoding="utf-8")
+        assert 'id="backup"' in html
+
+    def test_a_topic_can_be_renamed(self):
+        script = (UI_DIR / "app.js").read_text(encoding="utf-8")
+        assert "/topics/rename" in script
+        assert "/topics/suggest" in script
+        assert "/topics/move" in script
 

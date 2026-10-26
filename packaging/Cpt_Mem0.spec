@@ -38,6 +38,13 @@ SRC = ROOT / "src"
 # The package itself.
 datas = [
     (str(SRC / "cpt_mem0" / "ui"), "cpt_mem0/ui"),
+    # **The voice of the app.** The model is 109 MB and it is part of
+    # the program - the user does not download a voice, he installs
+    # an app that has one. The build puts it here.
+    (str(ROOT / "packaging" / "voices"), "piper_voices"),
+    # **The ear of the assistant.** whisper.cpp and the model of
+    # German speech - the user installs the app and can talk to it.
+    (str(ROOT / "packaging" / "whisper"), "whisper"),
     # The catalogue is data, not code. It has to be in the package -
     # without it the app starts and then says "catalogue not found".
     (str(SRC / "cpt_mem0" / "catalogue.json"), "cpt_mem0"),

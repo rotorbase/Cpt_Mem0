@@ -19,12 +19,21 @@ store/
 # GitHub Actions - the repository keeps the sources, not the output.
 build/
 dist/
+.tmp/
+
 *.spec.bak
 
 # Models (large binaries — fetched, never committed)
 models/
 *.gguf
 *.onnx
+
+# The voice and the ear. The build fetches them - the repository
+# keeps the sources, not the binaries. The voice is 109 MB, the
+# speech recognition 1.4 GB.
+packaging/voices/
+packaging/whisper/
+*.bin
 
 # OS
 .DS_Store
@@ -39,3 +48,5 @@ desktop.ini
 # The desktop app
 node_modules/
 dist-electron/
+.electron-cache/
+
