@@ -39,6 +39,10 @@ REQUIREMENTS = [
     "qdrant-client==1.20.0",
     "pyyaml==6.0.3",
     "pywebview>=5.0",
+    # **The voice.** Without pywin32 the speech API of Windows cannot
+    # be reached, and the app says so instead of speaking. The
+    # package has to be here - the build installs what the app needs.
+    "pywin32>=306",
 ]
 
 #: The build tool. It is not a dependency of the app.

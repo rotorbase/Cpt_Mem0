@@ -314,13 +314,55 @@ def _merge_similar(clusters: list[Cluster], vectors: list[list[float]],
     return merged
 
 
-def name_clusters(clusters: list[Cluster], llm=None) -> list[Cluster]:
+#: How many topics are named by the model. The others keep the
+#: shortened fact as their name.
+#:
+#: **The model is asked once per topic.** Eighteen topics would be
+#: eighteen questions before the window shows anything - and the
+#: window waits for the answer. The first ones are the strongest
+#: ones, and they are the ones the user sees lit.
+NAMED_TOPICS = 8
+
+
+def _is_own_name(label: str, facts: list[str]) -> bool:
+    """Whether the name is a name and not the fact again.
+
+    **A name is a new word.** "Fahrrad" is a name for the fact about
+    riding a bicycle - "Bicycle" is the fact in a new hat. The model
+    answers in the language of the facts when it does not understand
+    the instruction, and then the button says the same thing twice.
+
+    The test: the name has to contain a word that is not in the
+    facts. That word is the name.
+    """
+    words = [word.lower().strip(".,!?;:\"'")
+             for word in label.split()]
+    words = [word for word in words if len(word) > 2]
+    if not words:
+        return False
+
+    text = " ".join(facts).lower()
+    for word in words:
+        if word not in text:
+            return True
+    return False
+
+
+def name_clusters(clusters: list[Cluster], llm=None,
+                  cache: dict[str, str] | None = None) -> list[Cluster]:
     """Give every cluster a short name.
 
     The LLM is asked for two or three words. When it is not available
     - the models are suspended, or the answer is not usable - the
     first fact of the cluster stays as the name. A wrong name is
     worse than a long one.
+
+    **The cache.** The name of a topic does not change from one
+    second to the next, and the window asks for the topics every few
+    seconds. Without the cache every poll would send a dozen
+    questions to the model and the card would do nothing but answer
+    them. The key is the first fact of the cluster - the one that
+    carries the meaning.
     """
     if not clusters:
         return clusters
@@ -328,21 +370,36 @@ def name_clusters(clusters: list[Cluster], llm=None) -> list[Cluster]:
     if llm is None:
         return clusters
 
-    for cluster in clusters:
+    for number, cluster in enumerate(clusters):
         cluster.label = shorten(cluster.label)
+        if cache is not None and cluster.facts:
+            remembered = cache.get(cluster.facts[0])
+            if remembered:
+                cluster.label = remembered
+                continue
+        if number >= NAMED_TOPICS:
+            # **The rest keep the fact.** The window would wait for
+            # eighteen answers otherwise.
+            continue
         facts = "\n".join(f"- {fact}" for fact in cluster.facts[:8])
+        # **The prompt is in German.** A small model follows an
+        # instruction in its own language better - and the name is
+        # what the user reads on a button, so it has to come out in
+        # German even when the facts are in English.
         prompt = (
-            "These facts belong to one topic. Name the topic in **one or "
-            "two words**, **in German**. The facts themselves may be in "
-            "any language - the name is what the user reads on a "
-            "button, and the interface is German. The name has to fit on "
-            "a small button, so it must be short.\n\n"
-            "**Name the subject, not the category.** If the facts are "
-            "about fairy tales, the name is the subject - \"Märchen\" or "
-            "\"fairy tales\" - and not the category \"preferences\" or "
-            "\"hobbies\". The button is a topic the user recognises, not "
-            "a label for a kind of fact.\n\n"
-            "Answer with the name only, nothing else.\n\n"
+            "Diese Fakten gehören zu einem Thema. Nenne das Thema in "
+            "**einem oder zwei Wörtern auf Deutsch**.\n\n"
+            "**Nenne das Konkrete, nicht die Kategorie.** Geht es um "
+            "Märchen, ist der Name \"Märchen\" und nicht \"Vorlieben\" "
+            "oder \"Hobbys\". Der Knopf ist ein Thema, das der Nutzer "
+            "wiedererkennt.\n\n"
+            "Antworte mit dem Namen auf Deutsch, sonst nichts. Kein "
+            "Satz, keine Erklärung, keine Anführungszeichen.\n\n"
+            "Beispiele:\n"
+            "- Fakten über Fahrradfahren → Fahrrad\n"
+            "- Fakten über Kräuter in der Küche → Kräuter\n"
+            "- Fakten über den Namen des Assistenten → Assistent\n"
+            "- Fakten über Urlaub am Meer → Urlaub\n\n"
             f"{facts}"
         )
         try:
@@ -354,7 +411,14 @@ def name_clusters(clusters: list[Cluster], llm=None) -> list[Cluster]:
         label = str(answer).strip().strip('"').splitlines()[0].strip()
         # A name that is too long is not a name.
         if label and len(label) <= 40:
+            # **And a name that is the fact again is not a name
+            # either.** The model answered in the language of the
+            # facts - and the button would say what it said before.
+            if not _is_own_name(label, cluster.facts):
+                continue
             cluster.label = label
+            if cache is not None and cluster.facts:
+                cache[cluster.facts[0]] = label
 
     return clusters
 

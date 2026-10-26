@@ -173,7 +173,11 @@ things they like and the things they dislike.
 Rules:
 - A single sentence can be a fact. "I ride the bike to work every day"
   is one fact, not zero.
-- Keep the wording of the user as close as you can.
+- **Write the facts in German.** The user writes German, and the
+  facts are what the buttons are named after. A fact in English
+  becomes an English button later, and the interface is German.
+  "Der Nutzer fährt jeden Tag mit dem Rad zur Arbeit" - not "The
+  user rides a bicycle to work every day".
 - Never invent anything. Only what was said.
 - Do not store small talk, greetings or questions.
 - **The facts are about the user.** Do not store what the assistant

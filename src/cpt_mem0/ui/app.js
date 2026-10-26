@@ -195,6 +195,11 @@ async function togglePower() {
   try {
     await api(`/runtime/${action}`, { method: "POST" });
     await refresh();
+    // **The topics are asked for again.** The names come from the
+    // model - and the model only runs when the switch is on. Without
+    // this the buttons keep the names of a store without a model:
+    // the first words of the fact, in the language of the fact.
+    await refreshTopics();
     if (state.modelsLoaded) {
       const mib = state.appVram ? ` - ${state.appVram} MiB auf der Karte` : "";
       status(
@@ -476,8 +481,16 @@ async function showModels() {
 async function refresh() {
   try {
     const runtime = await api("/runtime");
+    // **The names come with the models.** While the models are off,
+    // a topic is called after the first words of its fact - in the
+    // language of the fact. When the models come up, the names are
+    // asked for again, and they are German.
+    const wereLoaded = state.modelsLoaded;
     state.suspended = runtime.suspended;
     state.modelsLoaded = runtime.models_loaded === true;
+    if (state.modelsLoaded && !wereLoaded) {
+      await refreshTopics();
+    }
     state.onGpu = runtime.on_gpu === true;
     state.appVram = runtime.app_vram_mib || 0;
     state.loading = runtime.loading === true;

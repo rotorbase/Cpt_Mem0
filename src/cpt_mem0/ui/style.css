@@ -354,11 +354,21 @@ body {
   position: relative;
   z-index: 10;
   display: flex;
-  align-items: center;
-  gap: 22px;
-  padding: 9px 16px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px 16px;
   background: linear-gradient(180deg, var(--panel), var(--panel-2));
   border-top: 1px solid var(--line);
+}
+
+/* **One row of settings.** The voice sits above, the models and the
+ * data below - so the cockpit can float over the right of the lower
+ * row without hiding a switch. */
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 22px;
   flex-wrap: wrap;
 }
 
@@ -615,12 +625,12 @@ body.plain .send { background: var(--accent); }
 .cockpit {
   position: absolute;
   z-index: 30;
-  right: 20px;
-  bottom: 62px;
+  right: 18px;
+  bottom: 46px;
   display: flex;
-  gap: 14px;
+  gap: 20px;
   align-items: flex-end;
-  padding: 9px 14px;
+  padding: 12px 18px;
   border-radius: 12px;
   background: rgba(20, 22, 26, .82);
   border: 1px solid var(--line);
@@ -631,22 +641,22 @@ body.plain .send { background: var(--accent); }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  min-width: 52px;
-  max-width: 96px;
+  gap: 3px;
+  min-width: 64px;
+  max-width: 120px;
 }
 
 /* **The name of the card does not have to be complete.** The
  * instruments are a panel, not a table - and the panel has to stay
  * inside the window. */
 .dial-label {
-  max-width: 92px;
+  max-width: 116px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .dial-value {
-  font: 600 19px/1 "Consolas", ui-monospace, monospace;
+  font: 600 24px/1 "Consolas", ui-monospace, monospace;
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
@@ -661,6 +671,7 @@ body.plain .send { background: var(--accent); }
   white-space: nowrap;
 }
 .dial-bar {
+  width: 100%;
   width: 52px;
   height: 3px;
   border-radius: 2px;

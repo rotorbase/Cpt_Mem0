@@ -1077,8 +1077,14 @@ class Daemon:
         # conversation of the store at a glance.
         clusters = cluster(entries, k=max(1, min(count, 18)))
 
-        if name and not self.suspended:
-            clusters = name_clusters(clusters, llm=self._ask_llm)
+        if not self.suspended and name:
+            # **The names are remembered.** The window asks for the
+            # topics every few seconds, and a dozen questions to the
+            # model every time would cost more than the answer.
+            if not hasattr(self, "_topic_names"):
+                self._topic_names: dict[str, str] = {}
+            clusters = name_clusters(clusters, llm=self._ask_llm,
+                                     cache=self._topic_names)
 
         # **The favourites come first and they stay.** The user marks
         # the topics they work on. When there are more topics than

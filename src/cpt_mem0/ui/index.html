@@ -85,32 +85,40 @@
 
 <!-- Die Einstellungen -->
 <footer class="settings">
-  <div class="setting">
-    <label for="model">Modell</label>
-    <select id="model"></select>
+  <!-- Die Stimme: oben, damit sie nicht vom Cockpit verdeckt wird. -->
+  <div class="settings-row">
+    <div class="setting switch">
+      <label for="voice">Sprachausgabe</label>
+      <button type="button" class="toggle" id="voice" role="switch"
+              aria-checked="false"><span></span></button>
+    </div>
+
+    <div class="setting">
+      <label for="voice-name">Stimme</label>
+      <select id="voice-name"><option value="">–</option></select>
+    </div>
   </div>
 
-  <div class="setting switch">
-    <label for="voice">Sprachausgabe</label>
-    <button type="button" class="toggle" id="voice" role="switch"
-            aria-checked="false"><span></span></button>
-  </div>
+  <!-- **Die Modelle und die Daten: unten links.** Beides ist die
+       Frage, was die App hat - das Modell, aus dem sie antwortet,
+       und die Erinnerungen, die sie sich merkt. -->
+  <div class="settings-row">
+    <div class="setting">
+      <label for="model">Modell</label>
+      <select id="model"></select>
+    </div>
 
-  <div class="setting">
-    <label for="voice-name">Stimme</label>
-    <select id="voice-name"><option value="">–</option></select>
-  </div>
+    <div class="setting">
+      <label for="model-folder">Modelle</label>
+      <button type="button" id="pick-folder">Ordner wählen</button>
+      <button type="button" id="show-models">Vorschläge</button>
+      <span class="path" id="model-folder-path"></span>
+    </div>
 
-  <div class="setting">
-    <label for="model-folder">Modelle</label>
-    <button type="button" id="pick-folder">Ordner wählen</button>
-    <button type="button" id="show-models">Vorschläge</button>
-    <span class="path" id="model-folder-path"></span>
-  </div>
-
-  <div class="setting danger-zone">
-    <span class="label">Daten</span>
-    <button type="button" class="danger" id="wipe">Alle Erinnerungen löschen</button>
+    <div class="setting danger-zone">
+      <span class="label">Daten</span>
+      <button type="button" class="danger" id="wipe">Alle Erinnerungen löschen</button>
+    </div>
   </div>
 </footer>
 

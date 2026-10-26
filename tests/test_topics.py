@@ -182,3 +182,97 @@ class TestTheNameFitsOnTheButton:
             assert len(group.label) <= 24
             assert "…" in group.label
 
+
+class TestTheNamingIsBounded:
+    """The model is asked once per topic - and not for all of them.
+
+    The window waits for the answer, and eighteen questions before
+    anything appears is eighteen questions too many.
+    """
+
+    def test_not_every_topic_is_asked(self):
+        from cpt_mem0.topics import NAMED_TOPICS, name_clusters
+
+        asked = []
+
+        def llm(prompt):
+            asked.append(prompt)
+            return "Fahrrad"
+
+        clusters = []
+        for index in range(18):
+            from cpt_mem0.topics import Cluster
+            clusters.append(Cluster(label=f"Thema {index}",
+                                    facts=[f"Fakt {index}"], size=1))
+        name_clusters(clusters, llm=llm)
+        assert len(asked) == NAMED_TOPICS
+
+    def test_the_names_are_remembered(self):
+        from cpt_mem0.topics import Cluster, name_clusters
+
+        asked = []
+
+        def llm(prompt):
+            asked.append(prompt)
+            return "Fahrrad"
+
+        cache = {}
+        for _ in range(2):
+            clusters = [Cluster(label="User enjoys riding a bicycle",
+                                facts=["User enjoys riding a bicycle"],
+                                size=1)]
+            name_clusters(clusters, llm=llm, cache=cache)
+        # The second time the name is known.
+        assert len(asked) == 1
+        assert cache["User enjoys riding a bicycle"] == "Fahrrad"
+
+
+class TestTheNameIsANewWord:
+    """A name is a new word.
+
+    The model answers in the language of the facts when it does not
+    understand the instruction - and then the button says what it
+    said before, only shorter.
+    """
+
+    def test_a_name_that_is_the_fact_again_is_refused(self):
+        from cpt_mem0.topics import Cluster, name_clusters
+
+        def llm(prompt):
+            return "Bicycle riding"
+
+        clusters = [Cluster(label="User enjoys riding a bicycle very much.",
+                            facts=["User enjoys riding a bicycle very much."],
+                            size=1)]
+        name_clusters(clusters, llm=llm)
+        # The name stayed the shortened fact.
+        assert "Bicycle" not in clusters[0].label
+
+    def test_a_german_name_is_taken(self):
+        from cpt_mem0.topics import Cluster, name_clusters
+
+        def llm(prompt):
+            return "Fahrrad"
+
+        clusters = [Cluster(label="User enjoys riding a bicycle very much.",
+                            facts=["User enjoys riding a bicycle very much."],
+                            size=1)]
+        name_clusters(clusters, llm=llm)
+        assert clusters[0].label == "Fahrrad"
+
+    def test_the_prompt_is_in_german(self):
+        """A small model follows an instruction in its own language."""
+        from cpt_mem0.topics import Cluster, name_clusters
+
+        asked = []
+
+        def llm(prompt):
+            asked.append(prompt)
+            return "Fahrrad"
+
+        clusters = [Cluster(label="User enjoys riding a bicycle very much.",
+                            facts=["User enjoys riding a bicycle very much."],
+                            size=1)]
+        name_clusters(clusters, llm=llm)
+        assert "Deutsch" in asked[0]
+

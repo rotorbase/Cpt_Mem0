@@ -271,3 +271,49 @@ class TestOnThisMachine:
         from cpt_mem0.voice import voices
 
         assert voices() == []
+
+
+class TestTheVoiceWithoutPywin32:
+    """The voice has to work without pywin32.
+
+    The package was missing from the build that the user installed -
+    and the app said so instead of speaking. .NET has spoken on
+    Windows since Vista, and it needs nothing but Windows itself.
+    """
+
+    def test_the_voices_are_found_without_pywin32(self, monkeypatch):
+        import cpt_mem0.voice as voice
+
+        monkeypatch.setattr(voice, "_com_available", lambda: False)
+        monkeypatch.setattr(voice, "_POWERSHELL_OK", None)
+
+        # The list of voices comes from .NET.
+        found = voice._powershell_voices()
+        if not found:
+            # No .NET on this machine - nothing to prove here.
+            return
+        for entry in found:
+            assert entry["name"]
+            assert entry["language"]
+
+    def test_the_status_does_not_mention_pywin32(self, monkeypatch):
+        import cpt_mem0.voice as voice
+
+        monkeypatch.setattr(voice, "_com_available", lambda: False)
+        monkeypatch.setattr(voice, "_POWERSHELL_OK", True)
+
+        status = voice.voice_status()
+        assert status["available"] is True
+        assert "pywin32" not in status["reason"]
+
+    def test_the_script_is_a_file_not_an_argument(self):
+        """The arguments of "-Command" are appended to the command.
+
+        A path with a colon in it then ends the line, and the parser
+        breaks. The script has to be a file.
+        """
+        import cpt_mem0.voice as voice
+
+        source = (Path(voice.__file__).read_text(encoding="utf-8"))
+        assert '"-File", script_path' in source
+
