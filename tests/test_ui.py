@@ -393,18 +393,22 @@ class TestSettings:
             calls.append(command)
             return Result()
 
-        import subprocess
+        from cpt_mem0 import proc
 
-        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setattr(proc, "run", fake_run)
         monkeypatch.setattr(os, "name", "nt")
 
         daemon.set_setting("autostart", True)
         assert calls, "the scheduled task was not written"
+        # **The command is a list, not a string.** With a string the
+        # program is started through the shell, and the shell gets the
+        # console: that is where the black window came from.
         command = calls[0]
+        assert isinstance(command, list)
         assert "schtasks" in command
         assert "/Create" in command
         assert "ONLOGON" in command
-        assert "cpt_mem0" in command
+        assert any("cpt_mem0" in part for part in command)
 
     def test_the_autostart_leaves_the_models_off(self, daemon, monkeypatch):
         """The autostart starts the daemon with the models suspended:
@@ -416,14 +420,16 @@ class TestSettings:
             stdout = ""
             stderr = ""
 
-        import subprocess
+        from cpt_mem0 import proc
 
-        monkeypatch.setattr(subprocess, "run",
+        monkeypatch.setattr(proc, "run",
                             lambda command, **kwargs: calls.append(command))
         monkeypatch.setattr(os, "name", "nt")
 
         daemon.set_setting("autostart", True)
-        assert "--suspend" in calls[0]
+        # The task is a list of arguments, and the program with its
+        # flags is one of them.
+        assert any("--suspend" in part for part in calls[0])
 
     def test_the_packaged_app_starts_itself(self, daemon, monkeypatch):
         """From the packaged app the task runs the .exe itself."""
@@ -448,9 +454,9 @@ class TestSettings:
             calls.append(command)
             return Result()
 
-        import subprocess
+        from cpt_mem0 import proc
 
-        monkeypatch.setattr(subprocess, "run", fake_run)
+        monkeypatch.setattr(proc, "run", fake_run)
         monkeypatch.setattr(os, "name", "nt")
 
         daemon.set_setting("autostart", False)
@@ -467,9 +473,9 @@ class TestSettings:
             stdout = ""
             stderr = ""
 
-        import subprocess
+        from cpt_mem0 import proc
 
-        monkeypatch.setattr(subprocess, "run",
+        monkeypatch.setattr(proc, "run",
                             lambda command, **kwargs: calls.append(command))
         monkeypatch.setattr(os, "name", "posix")
 

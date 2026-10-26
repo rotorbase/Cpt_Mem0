@@ -16,6 +16,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
+from . import proc
 from .planner import Hardware
 
 
@@ -32,12 +33,12 @@ class GpuInfo:
 
 def _run(cmd: list[str]) -> tuple[int, str]:
     try:
-        proc = subprocess.run(
+        done = proc.run(
             cmd, capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=15)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return 1, ""
-    return proc.returncode, proc.stdout
+    return done.returncode, done.stdout
 
 
 def _parse_nvidia_smi() -> GpuInfo | None:

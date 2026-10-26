@@ -12,6 +12,9 @@
 const $ = (id) => document.getElementById(id);
 
 const state = {
+  modelsLoaded: false,
+  onGpu: false,
+  appVram: 0,
   suspended: false,
   activeTopic: null,
   clusters: [],
@@ -121,25 +124,41 @@ function renderTopics(clusters, colours) {
 
 function renderPower() {
   const button = $("power");
-  button.classList.toggle("on", !state.suspended);
-  button.querySelector(".power-label").textContent =
-    state.suspended ? "AUS" : "AN";
+
+  // **The switch shows what is running, not what was asked for.**
+  // A switch that says "AN" while nothing is loaded is a lie the
+  // user notices at once - in the task manager the model is not
+  // there. The state comes from the servers.
+  const on = state.modelsLoaded;
+  button.classList.toggle("on", on);
+  button.querySelector(".power-label").textContent = on ? "AN" : "AUS";
+  button.title = on
+    ? "Die Modelle laufen. Klick: sie beenden und die VRAM freigeben."
+    : "Die Modelle sind aus. Klick: sie laden.";
 }
 
 async function togglePower() {
-  const action = state.suspended ? "resume" : "suspend";
+  // The action follows the state that is shown, not the one that was
+  // asked for. Otherwise a failed load would switch the switch back
+  // and the user would not know what is running.
+  const action = state.modelsLoaded ? "suspend" : "resume";
   $("power").disabled = true;
   try {
     await api(`/runtime/${action}`, { method: "POST" });
-    state.suspended = !state.suspended;
-    renderPower();
     await refresh();
-    status(
-      state.suspended
-        ? "Die Modelle sind aus. Das VRAM ist frei, die Erinnerungen bleiben."
-        : "Die Modelle sind geladen.",
-      "ok");
+    if (state.modelsLoaded) {
+      const mib = state.appVram ? ` - ${state.appVram} MiB auf der Karte` : "";
+      status(
+        state.onGpu
+          ? `Die Modelle sind geladen${mib}.`
+          : "Die Modelle laufen, aber nicht auf der Grafikkarte.",
+        state.onGpu ? "ok" : "error");
+    } else {
+      status("Die Modelle sind aus. Das VRAM ist frei, die Erinnerungen bleiben.",
+             "ok");
+    }
   } catch (error) {
+    await refresh();
     status(error.message, "error");
   } finally {
     $("power").disabled = false;
@@ -154,11 +173,20 @@ async function refresh() {
   try {
     const runtime = await api("/runtime");
     state.suspended = runtime.suspended;
+    state.modelsLoaded = runtime.models_loaded === true;
+    state.onGpu = runtime.on_gpu === true;
+    state.appVram = runtime.app_vram_mib || 0;
     renderPower();
 
     const used = runtime.gpu_used_mib;
     const free = runtime.gpu_free_mib;
     $("vram").textContent = used === null ? "–" : `${used} MiB`;
+    // **What this app holds.** The number of the whole card includes
+    // every other program, and the user cannot tell from it whether
+    // the model is really there.
+    $("vram-app").textContent = state.appVram
+      ? `${state.appVram} MiB`
+      : "–";
     const total = used !== null && free !== null ? used + free : 0;
     const percent = total ? Math.round((used / total) * 100) : 0;
     $("vram-bar").style.width = `${percent}%`;
@@ -168,6 +196,12 @@ async function refresh() {
     $("build").textContent = runtime.servers.length
       ? runtime.servers.map((s) => s.name).join(" + ")
       : "keine Modelle";
+    const models = $("models");
+    if (models) {
+      models.textContent = state.modelsLoaded
+        ? (state.onGpu ? "auf der GPU" : "auf der CPU")
+        : "aus";
+    }
   } catch (error) {
     status(error.message, "error");
   }

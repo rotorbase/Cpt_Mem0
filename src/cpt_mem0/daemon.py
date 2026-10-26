@@ -29,6 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from . import proc
 from .config import Config
 from .engine import Engine, EngineError, llama_endpoint
 from .supervisor import (
@@ -612,20 +613,22 @@ class Daemon:
 
         task_name = "Cpt_Mem0"
         action = self._autostart_command()
-        command = (
-            'schtasks /Create /TN "' + task_name + '" /TR \'"' + action
-            + '"\' /SC ONLOGON /RL LIMITED /F'
-        )
+        # **Without a shell.** With `shell=True` Windows starts
+        # `cmd.exe`, and that is the one that gets the console: the
+        # black window appears even with the flag that hides it from
+        # the program itself. The arguments are a list instead.
         try:
             if enabled:
-                subprocess.run(command, shell=True, capture_output=True,
-                               text=True, encoding="utf-8",
-                               errors="replace", timeout=30)
+                proc.run(
+                    ["schtasks", "/Create", "/TN", task_name, "/TR", action,
+                     "/SC", "ONLOGON", "/RL", "LIMITED", "/F"],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=30)
             else:
-                delete = 'schtasks /Delete /TN "' + task_name + '" /F'
-                subprocess.run(delete, shell=True, capture_output=True,
-                               text=True, encoding="utf-8",
-                               errors="replace", timeout=30)
+                proc.run(
+                    ["schtasks", "/Delete", "/TN", task_name, "/F"],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=30)
         except (OSError, subprocess.SubprocessError):
             pass
 
@@ -749,15 +752,47 @@ class Daemon:
 
         The VRAM number is the point of it: the user wants to see
         that the models are gone and the card is free.
+
+        **`models_loaded` is what the servers say, not what the
+        switch says.** The switch only knows that nobody asked for the
+        models to be stopped - it does not know whether a model is
+        really there. A button that says "the models are loaded"
+        while the card is empty is worse than no button.
         """
-        from .supervisor import gpu_free_mib, gpu_used_mib
+        from .supervisor import gpu_buffers, gpu_free_mib, gpu_used_mib
+
+        servers = self.supervisor.status()
+        loaded = [entry for entry in servers
+                  if entry["running"] and entry["ready"]]
+
+        # **Is it really on the card?** The server log says which
+        # device the model is on. A server that answers but computes
+        # on the CPU is loaded and useless at the same time.
+        on_gpu = False
+        app_vram_mib = 0.0
+        for entry in loaded:
+            spec = self.supervisor.states[entry["name"]].spec
+            buffers = gpu_buffers(spec.log_path)
+            model_mib = buffers["model_mib"]
+            if model_mib is not None and model_mib >= 1000:
+                on_gpu = True
+            # **What this app holds on the card.** The number of the
+            # whole card says nothing about the app: another program
+            # can use most of it. The user looks at the task manager
+            # and wants to find *this* number there.
+            for key in ("model_mib", "kv_mib", "rs_mib", "compute_mib"):
+                value = buffers[key]
+                if value:
+                    app_vram_mib += value
 
         return {
             "suspended": self.suspended,
-            "models_loaded": not self.suspended,
+            "models_loaded": bool(loaded),
+            "on_gpu": on_gpu,
+            "app_vram_mib": int(app_vram_mib) if app_vram_mib else 0,
             "gpu_used_mib": gpu_used_mib(),
             "gpu_free_mib": gpu_free_mib(),
-            "servers": self.supervisor.status(),
+            "servers": servers,
         }
 
     def status(self) -> dict[str, Any]:

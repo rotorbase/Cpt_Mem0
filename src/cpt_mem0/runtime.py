@@ -40,6 +40,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import proc
+
 #: The repository that publishes the rolling builds.
 REPO = "ggml-org/llama.cpp"
 
@@ -120,8 +122,7 @@ def detect_cuda_version() -> str | None:
     if exe is None:
         return None
     try:
-        import subprocess
-        result = subprocess.run(
+        result = proc.run(
             [exe, "--query-gpu=driver_version", "--format=csv,noheader"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=15)

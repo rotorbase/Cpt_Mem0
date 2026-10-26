@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import proc
+
 #: Whether this runs on Windows.
 #:
 #: It is a constant of its own and not ``os.name`` at the place of
@@ -348,7 +350,7 @@ def _read_command(command: list[str]) -> str | None:
     neither the command nor the encoding.
     """
     try:
-        result = subprocess.run(
+        result = proc.run(
             command,
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=15)
@@ -369,7 +371,7 @@ def gpu_used_mib() -> int | None:
     if exe is None:
         return None
     try:
-        result = subprocess.run(
+        result = proc.run(
             [exe, "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=15)
@@ -396,7 +398,7 @@ def gpu_free_mib() -> int | None:
     if exe is None:
         return None
     try:
-        result = subprocess.run(
+        result = proc.run(
             [exe, "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=15)
@@ -422,7 +424,7 @@ def process_vram_mib(pid: int) -> int | None:
     if exe is None:
         return None
     try:
-        result = subprocess.run(
+        result = proc.run(
             [exe, "--query-compute-apps=pid,used_memory",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, encoding="utf-8",

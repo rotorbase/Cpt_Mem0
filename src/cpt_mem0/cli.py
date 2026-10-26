@@ -16,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import proc
 from .catalogue import (
     Catalogue,
     default_catalogue_path,
@@ -499,8 +500,8 @@ def cmd_stop(args) -> int:
         print("the daemon did not stop in 30s - killing it")
         try:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                               capture_output=True, timeout=15)
+                proc.run(["taskkill", "/F", "/PID", str(pid)],
+                         capture_output=True, timeout=15)
             else:
                 os.kill(pid, signal.SIGKILL)
         except (OSError, subprocess.SubprocessError):
@@ -522,7 +523,7 @@ def _process_alive(pid: int) -> bool:
     """
     if os.name == "nt":
         try:
-            result = subprocess.run(
+            result = proc.run(
                 ["tasklist", "/FI", f"PID eq {pid}"],
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", timeout=10)
