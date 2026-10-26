@@ -31,8 +31,9 @@ TYPES = ("*.py", "*.md", "*.json", "*.yml", "*.yaml", "*.html", "*.js",
 
 #: The directories that are not scanned: they are not part of the
 #: repository.
-SKIP = {".git", "dist", "build", ".venv", "venv", "__pycache__",
-        ".pytest_cache", ".ruff_cache", "results"}
+SKIP = {".git", "dist", "build", ".venv", ".venv-build", "venv",
+        "__pycache__", ".pytest_cache", ".ruff_cache", "results",
+        "node_modules", "venv-build"}
 
 #: What must not be in the repository.
 #:
@@ -56,7 +57,12 @@ def files() -> list[Path]:
     found: list[Path] = []
     for pattern in TYPES:
         for path in ROOT.rglob(pattern):
-            if any(part in SKIP for part in path.parts):
+            parts = path.parts
+            if any(part in SKIP for part in parts):
+                continue
+            # Every virtual environment, whatever it is called.
+            if any(part.startswith(".venv") or part.startswith("venv")
+                   for part in parts):
                 continue
             found.append(path)
     return sorted(set(found))

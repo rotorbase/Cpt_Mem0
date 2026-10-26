@@ -63,15 +63,53 @@ hiddenimports = [
 # .dist-info of both packages and neither of the packages. mem0
 # imports its providers by name at runtime, so the modules are only
 # found when the whole tree is collected - data files and all.
-for package in ("mem0", "qdrant_client", "mem0.vector_stores",
-                "mem0.llms", "mem0.embeddings", "mem0.memory"):
+# **Every package with a native part.**
+#
+# pydantic_core is a Rust extension: without its .pyd the import of
+# pydantic fails, and with it the import of mem0 - and the daemon
+# never comes up. The error names a module that looks like it is
+# there, because the directory is there and the binary inside it is
+# not.
+#
+# The list is every installed package, not a hand-picked one. A
+# missing native extension breaks the import of the package above it,
+# and the traceback points at the wrong place.
+import sys as _sys
+import sysconfig as _sysconfig
+
+_site = Path(_sysconfig.get_paths()["purelib"])
+for _entry in sorted(_site.iterdir()):
+    if not _entry.is_dir():
+        continue
+    _name = _entry.name
+    if _name.endswith((".dist-info", ".data", ".libs")) or "_pth" in _name:
+        continue
+    if _name in ("__pycache__", "pip", "setuptools", "pkg_resources",
+                 "PyInstaller", "pyinstaller"):
+        continue
     try:
-        package_data, package_binaries, package_hidden = collect_all(package)
+        package_data, package_binaries, package_hidden = collect_all(_name)
     except Exception:
         continue
-    datas += package_data
-    binaries += package_binaries
-    hiddenimports += package_hidden
+    if package_data or package_binaries or package_hidden:
+        datas += package_data
+        binaries += package_binaries
+        hiddenimports += package_hidden
+
+# **The native extension modules themselves.**
+#
+# collect_all gathers the data files and the shared libraries, but
+# not the extension modules - the .pyd files. pydantic_core is one of
+# them, and without it the import of pydantic fails, and with it the
+# import of mem0 - so the daemon never comes up. The error names a
+# module whose directory is in the bundle and whose binary is not.
+for _entry in sorted(_site.iterdir()):
+    if not _entry.is_dir():
+        continue
+    for _native in _entry.rglob("*.pyd"):
+        binaries.append((str(_native), _entry.name))
+    for _native in _entry.rglob("*.so"):
+        binaries.append((str(_native), _entry.name))
 
 # The packages that must not be bundled - they are part of the
 # system or are only needed on the build machine.

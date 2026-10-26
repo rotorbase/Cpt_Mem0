@@ -47,9 +47,18 @@ BUILD_REQUIREMENTS = [
 
 
 def run(command: list[str], cwd: Path | None = None) -> None:
-    """Run a command and stop the build when it fails."""
+    """Run a command and stop the build when it fails.
+
+    **PYTHONPATH is empty while the build runs.** Without that the
+    build takes the packages of another environment - the one the
+    shell happens to point at - and the bundle gets two versions of
+    the same library. The error then names a version conflict that
+    exists nowhere else.
+    """
     print(f"$ {' '.join(command)}", flush=True)
-    result = subprocess.run(command, cwd=cwd or ROOT)
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    result = subprocess.run(command, cwd=cwd or ROOT, env=environment)
     if result.returncode != 0:
         raise SystemExit(f"the step failed with {result.returncode}")
 
@@ -84,6 +93,21 @@ def build() -> Path:
     folder = DIST / "Cpt_Mem0"
     if not (folder / "Cpt_Mem0.exe").is_file():
         raise SystemExit("the build produced no Cpt_Mem0.exe")
+
+    # **The .NET runtime configuration goes next to the exe.**
+    #
+    # The window is a WebView2 inside a WinForms window, and WinForms
+    # needs the WindowsDesktop framework of .NET. Without this file
+    # the runtime starts without a framework list, WinForms cannot be
+    # found, and the app falls back to the browser.
+    #
+    # It has to be next to the exe and not in the _internal folder:
+    # the .NET host looks for it there.
+    source = ROOT / "packaging" / "runtimeconfig.json"
+    target = folder / "Cpt_Mem0.runtimeconfig.json"
+    shutil.copyfile(source, target)
+    print(f"   {target.name} neben der exe", flush=True)
+
     return folder
 
 

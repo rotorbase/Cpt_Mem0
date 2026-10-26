@@ -555,6 +555,7 @@ def cmd_ui(args) -> int:
     from .config import Config
     from .daemon import Daemon, DaemonPaths
     from .window import (
+        BROWSER_FALLBACK,
         run_window,
         setup_logging,
         start_daemon_in_thread,
@@ -573,16 +574,39 @@ def cmd_ui(args) -> int:
     address = wait_for_address(daemon)
     if not address:
         print("the daemon did not come up", file=sys.stderr)
+        try:
+            from .window import log_problem
+
+            log_problem("the daemon did not come up - the reason is "
+                        "above in this file")
+        except Exception:
+            pass
         return 1
 
     print(f"the window is at {address}")
 
     try:
-        return run_window(daemon, address, open_browser=args.no_browser)
+        result = run_window(daemon, address, open_browser=args.no_browser)
     except KeyboardInterrupt:
         print("stopping")
         daemon.stop()
         return 0
+
+    if result == BROWSER_FALLBACK:
+        # **The daemon stays alive.** The window could not be opened,
+        # but the app is not a link: the interface is still there
+        # under the address, and the daemon serves it until the app
+        # is closed.
+        print("the app stays alive until you close it")
+        try:
+            while daemon.is_running:
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            print("stopping")
+        daemon.stop()
+        return 0
+
+    return result
 
 
 def cmd_status(args) -> int:

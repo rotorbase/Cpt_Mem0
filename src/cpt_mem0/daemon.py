@@ -338,6 +338,16 @@ class Daemon:
         self._write_pid_file()
 
     @property
+    def is_running(self) -> bool:
+        """Whether the daemon is still up.
+
+        The browser fallback keeps the app alive until the daemon
+        ends - the user closes the app, and then the store has to be
+        released.
+        """
+        return self._http is not None
+
+    @property
     def address(self) -> str:
         """The address of the window.
 
