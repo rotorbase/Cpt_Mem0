@@ -144,6 +144,18 @@ class PlannerConfig:
     #: the fallback for cards where the model would otherwise not fit.
     #: Set to ("llamacpp",) to require the GPU embedder.
     embedder_backends: Sequence[str] = ("llamacpp", "fastembed")
+    #: **The bigger model first, or the measured one.**
+    #:
+    #: With ``False`` (the default) the model whose extraction was
+    #: measured wins. That is the right choice for mem0: the
+    #: extraction takes the existing memories with it, and a model
+    #: with 250 000 tokens of context pulls facts out of a long
+    #: conversation where a model with 13 000 tokens cannot.
+    #:
+    #: With ``True`` the bigger model wins whenever it fits. That is
+    #: the right choice when the card has room for it and the
+    #: conversation is short.
+    prefer_larger: bool = False
 
     def reserve_for(self, total_mib: int) -> int:
         if self.reserve_mib is not None:
@@ -532,22 +544,36 @@ def _rank_by_fit(entries: list, hardware: Hardware,
                  config: PlannerConfig) -> list:
     """Order models so the card gets the best one it can hold.
 
-    Two rules, in this order:
+    Three rules, in this order:
 
     1. A model whose weights do not fit at any quantisation cannot be
        used on this card. It sorts behind every model that fits.
-    2. Among models that fit, the catalogue order decides - measured
-       extraction capability first (§17.4), then the catalogue rank.
+    2. Among models that fit, **the bigger one comes first.** A card
+       with more memory gets a better model - that is the whole point
+       of the card. The measurement of the extraction capability only
+       decides between models of the same size.
+    3. Between models of the same size, the measured extraction
+       capability comes first, then the catalogue rank.
 
     Without rule 1, a 12 GB card and a 4 GB card would both end up with
     the same small model whenever that model fits, and the larger card
     would gain nothing but context.
+
+    Without rule 2, a 16 GB card would get the 9B model, because the
+    9B is the one whose extraction was measured - even though the 14B
+    fits on it and knows more. The measurement says how good a model
+    is at pulling facts out of a text; it does not say that a smaller
+    model is better than a bigger one.
     """
     def sort_key(entry):
         headroom = _model_headroom_mib(entry, hardware, config)
         fits = headroom >= 0
+        params = int(getattr(entry, "params", 0) or 0)
         basis = getattr(entry, "rank_basis", "unmeasured") != "measured"
         rank = getattr(entry, "rank_order", 0)
+        if config.prefer_larger:
+            return (not fits, -params, basis, rank,
+                    getattr(entry, "model_id", ""))
         return (not fits, basis, rank, getattr(entry, "model_id", ""))
 
     return sorted(entries, key=sort_key)

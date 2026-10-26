@@ -474,6 +474,11 @@ class TestCatalogueSizes:
 
     # model id -> {quantisation: MiB}
     SIZES = {
+        "Qwen3-14B":             {"Q4_K_M": 8585, "Q5_K_M": 10027,
+                                  "Q6_K": 11560, "Q8_0": 14971,
+                                  "IQ4_XS": 7758, "Q3_K_M": 6982,
+                                  "UD-Q4_K_XL": 8735, "UD-Q5_K_XL": 10058,
+                                  "Q2_K": 5487},
         "Qwen3.5-9B":             {"Q8_0": 9086, "Q6_K": 7113, "Q5_K_M": 6273,
                                   "Q4_K_M": 5417, "IQ4_XS": 4929, "IQ3_XXS": 3830},
         "Qwen3-8B":               {"Q8_0": 8306, "Q6_K": 6414, "Q5_K_M": 5580,

@@ -18,25 +18,29 @@ from typing import Any
 
 
 def default_config_path() -> Path:
-    """Where the config lives."""
-    if os.name == "nt":
-        base = os.environ.get("APPDATA")
-        if not base:
-            base = str(Path.home() / "AppData" / "Roaming")
-        return Path(base) / "cpt-mem0" / "config.yaml"
-    base = os.environ.get("XDG_CONFIG_HOME")
-    if not base:
-        base = str(Path.home() / ".config")
-    return Path(base) / "cpt-mem0" / "config.yaml"
+    """Where the config lives.
+
+    **Through the one place that decides it.** The path is asked
+    from the installer every time, and not computed here from the
+    environment. Otherwise a test that runs on this machine writes
+    its own settings into the configuration of the installed app -
+    and the app then looks for its store in a temporary folder that
+    the next test run deletes.
+    """
+    from .install import config_dir
+
+    return config_dir() / "config.yaml"
 
 
 def default_store_path() -> Path:
-    """Where the vector store lives."""
-    if os.name == "nt":
-        base = os.environ.get("LOCALAPPDATA")
-        if not base:
-            base = str(Path.home() / "AppData" / "Local")
-        return Path(base) / "cpt-mem0" / "store"
+    """Where the vector store lives.
+
+    **Through the one place that decides it** - see
+    ``default_config_path``.
+    """
+    from .install import data_dir
+
+    return data_dir() / "store"
     base = os.environ.get("XDG_DATA_HOME")
     if not base:
         base = str(Path.home() / ".local" / "share")

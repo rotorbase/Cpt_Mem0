@@ -10,7 +10,7 @@
  * reachable whether the models run or not.
  */
 
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const http = require("http");
@@ -97,6 +97,9 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      // **The bridge.** The window asks the main process for the
+      // folder with the models.
+      preload: path.join(__dirname, "preload.js"),
       // **The renderer keeps drawing in the background.** Without it
       // Electron throttles the timers of a window that is covered -
       // the status would stop, and the window would show a stale
@@ -117,6 +120,19 @@ function createWindow() {
     mainWindow = null;
   });
 }
+
+ipcMain.handle("pick-model-folder", async () => {
+  const result = await dialog.showOpenDialog({
+    title: "Ordner mit den Modellen",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle("open-external", async (_event, url) => {
+  await shell.openExternal(url);
+  return true;
+});
 
 app.whenReady().then(async () => {
   if (!startBackend()) {

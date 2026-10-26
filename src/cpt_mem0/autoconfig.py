@@ -119,7 +119,8 @@ def _file_for(found: list[FoundModel], model_id: str,
 
 
 def configure(config: Any, catalogue: Any = None,
-              hardware: Any = None) -> AutoConfig:
+              hardware: Any = None,
+              extra: Path | str | None = None) -> AutoConfig:
     """Work out a configuration that fits the card right now.
 
     Nothing is written here - the caller decides that. The result
@@ -137,7 +138,7 @@ def configure(config: Any, catalogue: Any = None,
         return AutoConfig(ok=False,
                           reason="the graphics card could not be read")
 
-    found = find_models(catalogue=catalogue)
+    found = find_models(catalogue=catalogue, extra=extra)
     result = AutoConfig()
     result.candidates = [model.to_dict() for model in found]
 

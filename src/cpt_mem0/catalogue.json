@@ -394,6 +394,90 @@
         "value_length": 128
       },
       "kv_bytes_per_token_f16": 147456
+    },
+    {
+      "id": "Qwen3-14B",
+      "repo": "unsloth/Qwen3-14B-GGUF",
+      "params": 14000000000,
+      "architecture": "qwen3",
+      "license": "apache-2.0",
+      "rank_order": 8,
+      "notes": "Dense model, 40 layers, 8 KV heads, head_dim 128. The KV constant is derived from the model card, not measured on this build - the file sizes come from HuggingFace.",
+      "quantisations": [
+        {
+          "name": "Q4_K_M",
+          "file": "Qwen3-14B-Q4_K_M.gguf",
+          "size_bytes": 9002024960,
+          "kv_bytes_per_token": 163840,
+          "kv_source": "formula"
+        },
+        {
+          "name": "Q5_K_M",
+          "file": "Qwen3-14B-Q5_K_M.gguf",
+          "size_bytes": 10514071552,
+          "kv_bytes_per_token": 163840,
+          "kv_source": "formula"
+        },
+        {
+          "name": "Q6_K",
+          "file": "Qwen3-14B-Q6_K.gguf",
+          "size_bytes": 12121538560,
+          "kv_bytes_per_token": 163840,
+          "kv_source": "formula"
+        },
+        {
+          "name": "Q8_0",
+          "file": "Qwen3-14B-Q8_0.gguf",
+          "size_bytes": 15698231296,
+          "kv_bytes_per_token": 163840,
+          "kv_source": "formula"
+        },
+        {
+          "name": "IQ4_XS",
+          "file": "Qwen3-14B-IQ4_XS.gguf",
+          "size_bytes": 8134852608,
+          "kv_bytes_per_token": 163840,
+          "kv_source": "formula"
+        },
+        {
+          "name": "Q3_K_M",
+          "file": "Qwen3-14B-Q3_K_M.gguf",
+          "size_bytes": 7321157632,
+          "kv_bytes_per_token": 163840,
+          "kv_source": "formula"
+        },
+        {
+          "name": "UD-Q4_K_XL",
+          "file": "Qwen3-14B-UD-Q4_K_XL.gguf",
+          "size_bytes": 9159311360,
+          "kv_bytes_per_token": 163840,
+          "kv_source": "formula"
+        },
+        {
+          "name": "UD-Q5_K_XL",
+          "file": "Qwen3-14B-UD-Q5_K_XL.gguf",
+          "size_bytes": 10546577408,
+          "kv_bytes_per_token": 163840,
+          "kv_source": "formula"
+        },
+        {
+          "name": "Q2_K",
+          "file": "Qwen3-14B-Q2_K.gguf",
+          "size_bytes": 5753536512,
+          "kv_bytes_per_token": 163840,
+          "kv_source": "formula"
+        }
+      ],
+      "geometry": {
+        "architecture": "qwen3",
+        "block_count": 40,
+        "n_kv_heads": 8,
+        "key_length": 128,
+        "value_length": 128,
+        "n_embd": 5120
+      },
+      "recurrent_state_mib": 0.0,
+      "recurrent_state_source": "none"
     }
   ]
 }

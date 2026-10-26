@@ -700,11 +700,40 @@ size × 0.89 (measured host fraction).
 | Model | Q8_0 | Q6_K | Q5_K_M | Q4_K_M | IQ4_XS | IQ3_XXS |
 |---|---|---|---|---|---|---|
 | Qwen3.5-9B | 9086 | 7113 | 6273 | 5417 | 4929 | 3830 |
+| Qwen3-14B | 14971 | 11560 | 10027 | 8585 | 7758 | – |
 | Qwen3-8B | 8306 | 6414 | 5580 | 4795 | 4369 | 3252 |
 | Llama-3.1-8B | – | 6290 | 5467 | 4693 | 4257 | 3168 |
 | gemma-4-E2B-it | 4814 | 4293 | 3201 | 2963 | 2846 | 2263 |
 | Qwen3.5-4B | 4275 | 3363 | 2998 | 2614 | 2362 | 1859 |
 | Qwen3-4B-Instruct-2507 | 4082 | 3153 | 2756 | 2382 | 2166 | 1597 |
+
+### 11.1 Qwen3-14B — the sizes and the KV constant
+
+The sizes come from the Hugging Face API on 2026-10-26
+(`unsloth/Qwen3-14B-GGUF`, `?blobs=true`).
+
+**The KV constant is derived, not measured.** The model card gives
+the geometry: 40 layers, 8 KV heads, head_dim 128. The f16 size per
+token follows from it:
+
+```
+2 (K and V) × 40 layers × 8 KV heads × 128 head_dim × 2 bytes
+    = 163 840 bytes per token
+```
+
+That is the number the catalogue carries, marked `kv_source:
+"formula"`. It has not been measured on this build - a measurement
+needs the model in the VRAM, and the card was busy. The models with
+a measured constant are the ones in the table above.
+
+**The 14B on a 16 GB card.** The plan for 16 384 MiB picks
+Qwen3-14B Q8_0 with 13 568 tokens of context; Qwen3.5-9B Q8_0 fits
+on the same card with 250 624 tokens. For mem0 the context matters
+as much as the size - the extraction takes the existing memories with
+it, and a model with 13 568 tokens cannot hold a long conversation
+that a model with 250 624 can. The planner therefore prefers the
+measured model by default; `prefer_larger` in the planner config
+turns it the other way.
 
 **Resolution pitfall:** `unsloth/gemma-4-E2B-it-GGUF` contains
 `MTP/mtp-gemma-4-E2B-it-Q8_0.gguf` (93 MiB) — a speculative-decoding draft

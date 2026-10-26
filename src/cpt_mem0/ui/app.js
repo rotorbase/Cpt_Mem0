@@ -273,35 +273,158 @@ function renderFavourites() {
 /* die Oberflaeche                                                       */
 /* ------------------------------------------------------------------ */
 
-const THEMES = ["plain", "winamp", "keys", "retro"];
-
 function renderTheme() {
-  document.body.className = state.theme;
-  const picker = $("theme-picker");
-  if (!picker) return;
-  for (const card of picker.querySelectorAll(".theme-card")) {
-    card.classList.toggle("active", card.dataset.theme === state.theme);
-  }
+  // **One interface.** The others were tried and the plain one was
+  // the one that stayed.
+  document.body.className = "plain";
 }
 
-function bindThemePicker() {
-  const picker = $("theme-picker");
-  if (!picker) return;
-  for (const card of picker.querySelectorAll(".theme-card")) {
-    card.addEventListener("click", async () => {
-      state.theme = card.dataset.theme;
-      renderTheme();
-      try {
-        await api("/settings/theme", {
-          method: "POST",
-          body: JSON.stringify({ value: state.theme }),
-        });
-        status(`Oberfläche: ${card.querySelector(".theme-name").textContent}`);
-      } catch (error) {
-        status(error.message, "error");
-      }
-    });
+/* ------------------------------------------------------------------ */
+/* das Cockpit                                                           */
+/* ------------------------------------------------------------------ */
+
+function renderCockpit(runtime) {
+  // **The instruments.** The speed of the answer, how busy the card
+  // is, how much of it is in use, and whether the model runs.
+  const tps = runtime.tokens_per_second;
+  $("tps").textContent = tps ? Number(tps).toFixed(1) : "–";
+
+  const percent = runtime.gpu_percent;
+  $("gpu-percent").textContent =
+    percent === null || percent === undefined ? "–" : `${percent}%`;
+  $("gpu-name").textContent = runtime.gpu_name || "GPU";
+
+  const used = runtime.gpu_used_mib;
+  const free = runtime.gpu_free_mib;
+  const total = (used || 0) + (free || 0);
+  const share = total ? Math.round((used || 0) / total * 100) : 0;
+  $("vram-percent").textContent = total ? `${share}%` : "–";
+  $("cockpit-vram-bar").style.width = `${share}%`;
+
+  const lamp = $("cockpit-power");
+  lamp.classList.toggle("on", runtime.models_loaded === true);
+  lamp.classList.toggle("loading", runtime.loading === true);
+  $("cockpit-power-label").textContent =
+    runtime.loading ? "lädt" : runtime.models_loaded ? "an" : "aus";
+}
+
+/* ------------------------------------------------------------------ */
+/* die Stimmen                                                           */
+/* ------------------------------------------------------------------ */
+
+async function loadVoices() {
+  const select = $("voice-name");
+  if (!select) return;
+  let data;
+  try {
+    data = await api("/settings/voices");
+  } catch (error) {
+    status(error.message, "error");
+    return;
   }
+
+  select.innerHTML = "";
+  if (!data.available) {
+    // **The reason belongs to the user.** A switch that changes
+    // nothing is worse than no switch.
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "keine Stimme";
+    select.appendChild(option);
+    select.disabled = true;
+    status(data.reason || "Auf diesem Rechner gibt es keine Stimme.",
+           "error");
+    return;
+  }
+
+  select.disabled = false;
+  for (const voice of data.voices) {
+    const option = document.createElement("option");
+    option.value = voice.description;
+    option.textContent = `${voice.name} (${voice.language})`;
+    select.appendChild(option);
+  }
+  if (data.selected) {
+    select.value = data.selected;
+  }
+  select.addEventListener("change", async () => {
+    try {
+      await api("/settings/voice-name", {
+        method: "POST",
+        body: JSON.stringify({ value: select.value }),
+      });
+      status(`Stimme: ${select.value}`);
+    } catch (error) {
+      status(error.message, "error");
+    }
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* die Modellvorschlaege                                                 */
+/* ------------------------------------------------------------------ */
+
+async function showModels() {
+  const dialog = $("model-dialog");
+  const list = $("model-list");
+  const hint = $("model-hint");
+  if (!dialog) return;
+
+  try {
+    const data = await api("/models");
+    if (data.error) {
+      hint.textContent = data.error;
+    } else {
+      hint.textContent =
+        `${data.card.name || "Die Karte"} · ${data.card.vram_mib} MiB. `
+        + "Der Download führt zu HuggingFace - die Datei dann in den "
+        + "Modellordner legen.";
+    }
+    list.innerHTML = "";
+    for (const model of data.models || []) {
+      const item = document.createElement("div");
+      item.className = model.local ? "model-item local" : "model-item";
+
+      const name = document.createElement("div");
+      const title = document.createElement("div");
+      title.className = "model-name";
+      title.textContent = `${model.model_id} ${model.quantisation}`;
+      if (model.local) {
+        const badge = document.createElement("span");
+        badge.className = "model-badge";
+        badge.textContent = "auf der Platte";
+        title.appendChild(badge);
+      } else if (!model.measured) {
+        const badge = document.createElement("span");
+        badge.className = "model-badge unmeasured";
+        badge.textContent = "ungeprüft";
+        title.appendChild(badge);
+      }
+      const meta = document.createElement("div");
+      meta.className = "model-meta";
+      meta.textContent = `${model.size_mib} MiB Datei`;
+      name.appendChild(title);
+      name.appendChild(meta);
+
+      const numbers = document.createElement("div");
+      numbers.className = "model-numbers";
+      numbers.textContent = `${model.vram_mib} MiB VRAM · n_ctx ${model.n_ctx}`;
+
+      const link = document.createElement("a");
+      link.href = model.link;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = model.local ? "HuggingFace" : "Herunterladen";
+
+      item.appendChild(name);
+      item.appendChild(numbers);
+      item.appendChild(link);
+      list.appendChild(item);
+    }
+  } catch (error) {
+    hint.textContent = error.message;
+  }
+  dialog.showModal();
 }
 
 /* ------------------------------------------------------------------ */
@@ -344,6 +467,7 @@ async function refresh() {
         : state.loading ? "lädt" : "aus";
     }
     renderLoading();
+    renderCockpit(runtime);
   } catch (error) {
     status(error.message, "error");
   }
@@ -555,7 +679,30 @@ async function start() {
       : "Sprachausgabe aus.");
   });
 
-  bindThemePicker();
+  loadVoices();
+
+  $("show-models").addEventListener("click", showModels);
+  $("model-close").addEventListener("click", () => {
+    $("model-dialog").close();
+  });
+
+  // **The folder with the models.** The user puts the GGUF files
+  // where they want them, and the app looks there.
+  $("pick-folder").addEventListener("click", async () => {
+    try {
+      const folder = await window.cpt.pickModelFolder();
+      if (!folder) return;
+      await api("/settings/model-folder", {
+        method: "POST",
+        body: JSON.stringify({ value: folder }),
+      });
+      $("model-folder-path").textContent = folder;
+      $("model-folder-path").title = folder;
+      status(`Modelle werden hier gesucht: ${folder}`);
+    } catch (error) {
+      status(error.message, "error");
+    }
+  });
 
   // **The switches show what is set.** Before this they were
   // whatever the HTML said, and the state came back from the server

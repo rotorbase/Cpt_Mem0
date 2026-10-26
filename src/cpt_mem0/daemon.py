@@ -298,6 +298,8 @@ class Daemon:
         #: object is the slow part and it is not needed when the
         #: voice is off.
         self._speaker: Any = None
+        #: The voice the user chose.
+        self._voice_name: str = ""
 
     # ------------------------------------------------------------------
     # setup
@@ -360,7 +362,9 @@ class Daemon:
         from .autoconfig import configure
 
         try:
-            plan = configure(self.config)
+            plan = configure(
+                self.config,
+                extra=self.settings_data.get("model_folder") or None)
         except Exception as error:
             self._load_error = str(error)
             return
@@ -599,7 +603,9 @@ class Daemon:
 
         while True:
             try:
-                plan = configure(self.config)
+                plan = configure(
+                    self.config,
+                    extra=self.settings_data.get("model_folder") or None)
             except Exception as error:
                 self._loading = False
                 self._load_error = str(error)
@@ -664,9 +670,106 @@ class Daemon:
 
         from .voice import Speaker
 
-        if self._speaker is None:
-            self._speaker = Speaker()
+        name = str(self.settings_data.get("voice_name") or "")
+        if self._speaker is None or self._voice_name != name:
+            # **A new voice means a new speaker** - the SAPI object
+            # holds the voice it was given.
+            self._speaker = Speaker(name=name)
+            self._voice_name = name
         return self._speaker.speak(text)
+
+    def models(self) -> dict[str, Any]:
+        """Which models fit on the card, and where to get them.
+
+        **The suggestions with the link.** The user asks which model
+        fits on their card. The answer is a list: the model, the
+        quantisation, how much of the card it needs, how much context
+        is left over, the link to the file on HuggingFace, and
+        whether the file is already on this machine.
+
+        The order is the order of the plan: the best model that fits
+        comes first. The context matters as much as the size - the
+        extraction takes the existing memories with it, and a model
+        with a small context cannot hold a long conversation.
+        """
+        from .catalogue import load_default_catalogue
+        from .hardware import detect_hardware
+        from .models import find_models
+        from .planner import PlannerConfig, evaluate_candidate
+
+        catalogue = load_default_catalogue()
+        hardware = detect_hardware()
+        if hardware is None:
+            return {"models": [], "error": "die Grafikkarte konnte nicht "
+                                          "gelesen werden"}
+
+        local = {model.path.name.lower()
+                 for model in find_models(catalogue=catalogue)}
+
+        config = PlannerConfig(embedder_backends=("llamacpp", "fastembed"))
+        results: list[dict[str, Any]] = []
+
+        for entry in catalogue.sorted_entries():
+            for quant in entry.sorted_quantisations():
+                if not quant.kv_bytes_per_token:
+                    # Without the KV constant the size on the card is
+                    # unknown, and an unknown size is not a
+                    # suggestion.
+                    continue
+                candidate = evaluate_candidate(
+                    model_id=entry.model_id,
+                    quantisation=quant.name,
+                    file_name=quant.file_name,
+                    file_size_mib=quant.file_size_mib,
+                    kv_bytes_per_token=quant.kv_bytes_per_token,
+                    cache_type="q8_0",
+                    hardware=hardware,
+                    config=config,
+                    embedder_backend="llamacpp",
+                    model_rank_basis=entry.rank_basis,
+                    recurrent_state_mib=entry.recurrent_state_mib,
+                )
+                if candidate is None:
+                    continue
+                results.append({
+                    "model_id": entry.model_id,
+                    "quantisation": quant.name,
+                    "file": quant.file_name,
+                    "size_mib": round(quant.file_size_mib),
+                    "vram_mib": round(candidate.total_vram_mib),
+                    "n_ctx": candidate.n_ctx,
+                    "measured": entry.rank_basis == "measured",
+                    "link": (f"https://huggingface.co/{entry.repo}/resolve/"
+                             f"main/{quant.file_name}"),
+                    "page": f"https://huggingface.co/{entry.repo}",
+                    "local": quant.file_name.lower() in local,
+                })
+
+        # **The best that fits comes first.** A model that does not
+        # fit is not a suggestion, but it is worth knowing that it
+        # exists - so it stays in the list and is marked.
+        results.sort(key=lambda item: (not item["local"], item["vram_mib"]))
+        return {
+            "models": results,
+            "card": {"name": hardware.name, "vram_mib": hardware.total_vram_mib},
+        }
+
+    def voice_status(self) -> dict[str, Any]:
+        """The voices of the machine, and why there are none.
+
+        **The user picks the voice.** Windows has a voice per
+        language, and the German one is not always there. The list is
+        shown so the user can hear which one is which.
+        """
+        from .voice import voice_status
+
+        status = voice_status()
+        return {
+            "available": status["available"],
+            "reason": status["reason"],
+            "voices": status["voices"],
+            "selected": self.settings_data.get("voice_name"),
+        }
 
     def settings(self) -> dict[str, Any]:
         """The settings of the window."""
@@ -681,6 +784,8 @@ class Daemon:
             #: the cluster, not its name - the name comes from the
             #: model and the model may name it differently tomorrow.
             "favourites": list(self.settings_data.get("favourites", [])),
+            #: Where the user keeps the models.
+            "model_folder": self.settings_data.get("model_folder", ""),
         }
 
     def toggle_favourite(self, fact: str) -> list[str]:
@@ -713,7 +818,7 @@ class Daemon:
         never done without being asked for.
         """
         if name not in ("autostart", "voice", "winamp", "model", "theme",
-                        "favourites"):
+                        "favourites", "voice_name", "model_folder"):
             raise ApiError(f"unknown setting: {name}")
 
         if name == "autostart":
@@ -721,6 +826,19 @@ class Daemon:
             self._apply_autostart(bool(value))
         elif name == "model":
             self.settings_data["model"] = str(value) if value else None
+        elif name == "model_folder":
+            # **Where the models are.** The user decides - the app
+            # only looks there.
+            self.settings_data["model_folder"] = str(value or "")
+            self._save_settings()
+            return {"ok": True,
+                    "model_folder": self.settings_data["model_folder"]}
+        elif name == "voice_name":
+            # **Which voice speaks.** The names come from Windows.
+            self.settings_data["voice_name"] = str(value) if value else ""
+            self._save_settings()
+            return {"ok": True,
+                    "voice_name": self.settings_data["voice_name"]}
         elif name == "theme":
             # **A name, not a flag.** There are four interfaces, and
             # the window says which one it wants.
@@ -977,7 +1095,7 @@ class Daemon:
         really there. A button that says "the models are loaded"
         while the card is empty is worse than no button.
         """
-        from .supervisor import gpu_buffers, gpu_free_mib, gpu_used_mib
+        from .supervisor import gpu_buffers, gpu_free_mib, gpu_used_mib, gpu_utilisation
 
         servers = self.supervisor.status()
         loaded = [entry for entry in servers
@@ -1017,7 +1135,22 @@ class Daemon:
             "waiting": self._waiting,
             "load_error": self._load_error,
             "auto": self._auto.to_dict() if self._auto is not None else {},
+            # **The cockpit.** What the instruments show.
+            "tokens_per_second": round(
+                getattr(self.engine, "last_tokens_per_second", 0.0) or 0.0, 1),
+            "gpu_name": self._gpu_name(),
+            "gpu_percent": gpu_utilisation(),
         }
+
+    def _gpu_name(self) -> str:
+        """The name of the card."""
+        from .hardware import detect_hardware
+
+        try:
+            hardware = detect_hardware()
+        except Exception:
+            return ""
+        return hardware.name if hardware else ""
 
     def status(self) -> dict[str, Any]:
         """The state of the daemon."""
@@ -1180,6 +1313,19 @@ def _make_handler(daemon: Daemon) -> type[BaseHTTPRequestHandler]:
 
                 if path in ("/settings", "/v1/settings"):
                     self._send(200, daemon.settings())
+                    return
+
+                if path in ("/models", "/v1/models"):
+                    # **The suggestions.** Which model fits on the
+                    # card, and where to get it.
+                    self._send(200, daemon.models())
+                    return
+
+                if path in ("/settings/voices", "/v1/settings/voices"):
+                    # **The voices of the machine.** The user picks
+                    # one - Windows has a voice per language, and the
+                    # German one is not always installed.
+                    self._send(200, daemon.voice_status())
                     return
 
                 if path in ("/plan", "/v1/plan"):

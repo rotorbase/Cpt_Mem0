@@ -62,6 +62,27 @@
   </form>
 
   <div class="statusline" id="statusline"></div>
+
+  <!-- Das Cockpit: die Instrumente unten rechts. -->
+  <div class="cockpit" id="cockpit">
+    <div class="dial">
+      <span class="dial-value" id="tps">–</span>
+      <span class="dial-label">Token/s</span>
+    </div>
+    <div class="dial">
+      <span class="dial-value" id="gpu-percent">–</span>
+      <span class="dial-label" id="gpu-name">GPU</span>
+    </div>
+    <div class="dial">
+      <span class="dial-value" id="vram-percent">–</span>
+      <span class="dial-label">VRAM</span>
+      <div class="dial-bar"><span id="cockpit-vram-bar"></span></div>
+    </div>
+    <div class="dial lamp" id="cockpit-power" title="Inference">
+      <span class="lamp-dot"></span>
+      <span class="dial-label" id="cockpit-power-label">Aus</span>
+    </div>
+  </div>
 </main>
 
 <!-- Die Einstellungen -->
@@ -83,26 +104,16 @@
             aria-checked="false"><span></span></button>
   </div>
 
-  <div class="setting themes">
-    <span class="label">Oberfläche</span>
-    <div class="theme-picker" id="theme-picker">
-      <button type="button" class="theme-card" data-theme="plain">
-        <span class="theme-shot shot-plain"></span>
-        <span class="theme-name">Schlicht</span>
-      </button>
-      <button type="button" class="theme-card" data-theme="winamp">
-        <span class="theme-shot shot-winamp"></span>
-        <span class="theme-name">Player</span>
-      </button>
-      <button type="button" class="theme-card" data-theme="keys">
-        <span class="theme-shot shot-keys"></span>
-        <span class="theme-name">Tasten</span>
-      </button>
-      <button type="button" class="theme-card" data-theme="retro">
-        <span class="theme-shot shot-retro"></span>
-        <span class="theme-name">Messenger</span>
-      </button>
-    </div>
+  <div class="setting">
+    <label for="voice-name">Stimme</label>
+    <select id="voice-name"><option value="">–</option></select>
+  </div>
+
+  <div class="setting">
+    <label for="model-folder">Modelle</label>
+    <button type="button" id="pick-folder">Ordner wählen</button>
+    <button type="button" id="show-models">Vorschläge</button>
+    <span class="path" id="model-folder-path"></span>
   </div>
 
   <div class="setting danger-zone">
@@ -110,6 +121,17 @@
     <button type="button" class="danger" id="wipe">Alle Erinnerungen löschen</button>
   </div>
 </footer>
+
+<!-- Die Modellvorschlaege: was passt auf die Karte, und wo es her
+     kommt. -->
+<dialog class="model-dialog" id="model-dialog">
+  <div class="model-head">
+    <h2>Modelle für deine Karte</h2>
+    <button type="button" class="close" id="model-close">×</button>
+  </div>
+  <p class="model-hint" id="model-hint"></p>
+  <div class="model-list" id="model-list"></div>
+</dialog>
 
 <script src="/ui/app.js"></script>
 </body>

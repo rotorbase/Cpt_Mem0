@@ -412,6 +412,35 @@ def gpu_free_mib() -> int | None:
         return None
 
 
+def gpu_utilisation() -> int | None:
+    """How busy the card is, in percent.
+
+    **The number on the cockpit.** A model that answers in two
+    seconds and a model that answers in twenty are both "loaded" -
+    only the speed tells them apart. The value comes from the
+    driver, and it is None when the driver does not say.
+    """
+    import shutil
+
+    exe = shutil.which("nvidia-smi")
+    if exe is None:
+        return None
+    try:
+        result = proc.run(
+            [exe, "--query-gpu=utilization.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=15)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return int(float(result.stdout.strip().splitlines()[0]))
+    except (ValueError, IndexError):
+        return None
+
+
 def process_vram_mib(pid: int) -> int | None:
     """The VRAM of one process.
 

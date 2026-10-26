@@ -65,16 +65,25 @@ class FoundModel:
         }
 
 
-def model_roots() -> list[Path]:
+def model_roots(extra: Path | str | None = None) -> list[Path]:
     """Where the models are looked for.
 
     The huggingface cache is the first one: that is where
     `huggingface-cli download` puts them, and that is what most
     people use. The own folder of the app is the second one, for the
     models that were put there by hand.
+
+    **The folder the user chose comes first.** It is the folder they
+    put their models in, and it has to be found before anything else.
     """
     home = Path.home()
-    roots = [
+    roots: list[Path] = []
+    if extra:
+        try:
+            roots.append(Path(extra))
+        except (TypeError, ValueError):
+            pass
+    roots += [
         home / ".cache" / "huggingface" / "hub",
         home / ".cache" / "huggingface" / "embed-models",
         home / ".cache" / "huggingface",
@@ -114,14 +123,15 @@ def _catalogue_index(catalogue: Any) -> dict[str, tuple[str, str]]:
 
 
 def find_models(roots: list[Path] | None = None,
-                catalogue: Any = None) -> list[FoundModel]:
+                catalogue: Any = None,
+                extra: Path | str | None = None) -> list[FoundModel]:
     """Every model file on the machine.
 
     The catalogue is only used to name the models. A file that is not
     in the catalogue is still found - it is just not in the plan.
     """
     if roots is None:
-        roots = model_roots()
+        roots = model_roots(extra)
     index = _catalogue_index(catalogue)
 
     found: list[FoundModel] = []

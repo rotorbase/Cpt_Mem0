@@ -122,12 +122,16 @@ class TestTheUserInterface:
         html = (UI_DIR / "index.html").read_text(encoding="utf-8")
         for control in ("model", "autostart", "voice"):
             assert f'id="{control}"' in html
-        # **The interface is chosen from four pictures.** The old
-        # switch was a flag for one look, and it had no way to turn
-        # it on.
-        assert 'id="theme-picker"' in html
-        for theme in ("plain", "winamp", "keys", "retro"):
-            assert f'data-theme="{theme}"' in html
+        # **One interface.** The pictures of the other three were
+        # tried and the plain one stayed.
+        assert 'id="theme-picker"' not in html
+        assert 'data-theme=' not in html
+        # The voice is picked, not only switched on.
+        assert 'id="voice-name"' in html
+        # The folder with the models, and the suggestions.
+        assert 'id="pick-folder"' in html
+        assert 'id="show-models"' in html
+        assert 'id="model-dialog"' in html
 
     def test_the_topic_buttons_have_a_star(self):
         """A topic the user works on stays at the front."""
@@ -673,3 +677,44 @@ class TestThePackagedApp:
         parser = build_parser()
         args = parser.parse_args(["status"])
         assert args.func.__name__ == "cmd_status"
+
+
+class TestTheConfigurationIsNotWrittenByTests:
+    """A test must not write into the configuration of the app.
+
+    The path is asked from the installer, so a test that moves the
+    installer's directory moves the configuration with it. Before
+    that, every test run on this machine wrote its own settings
+    into the configuration of the installed app - and the app then
+    looked for its store in a temporary folder that the next test
+    run deletes.
+    """
+
+    def test_the_config_path_follows_the_installer(self, tmp_path,
+                                                    monkeypatch):
+        from cpt_mem0 import config as config_module
+
+        monkeypatch.setattr("cpt_mem0.install.config_dir",
+                            lambda: tmp_path / "config")
+        monkeypatch.setattr("cpt_mem0.install.data_dir",
+                            lambda: tmp_path / "data")
+
+        assert config_module.default_config_path() == (
+            tmp_path / "config" / "config.yaml")
+        assert config_module.default_store_path() == (
+            tmp_path / "data" / "store")
+
+    def test_saving_writes_into_the_moved_directory(self, tmp_path,
+                                                     monkeypatch):
+        from cpt_mem0 import config as config_module
+
+        monkeypatch.setattr("cpt_mem0.install.config_dir",
+                            lambda: tmp_path / "config")
+        monkeypatch.setattr("cpt_mem0.install.data_dir",
+                            lambda: tmp_path / "data")
+
+        config = config_module.load_config()
+        path = config_module.save_config(config)
+        assert path.is_file()
+        assert str(path).startswith(str(tmp_path))
+

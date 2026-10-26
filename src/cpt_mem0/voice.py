@@ -31,6 +31,10 @@ def available() -> bool:
     Windows only. On Linux and macOS there is no SAPI - and the app
     is not built for them yet.
     """
+    # **The engine, not the voices.** A machine with the speech API
+    # but without a voice installed can still speak - it just has
+    # nothing to speak with. The voices are a separate question, and
+    # voice_status() answers it.
     import sys
 
     if sys.platform != "win32":
@@ -42,12 +46,55 @@ def available() -> bool:
     return True
 
 
+def voice_status() -> dict[str, Any]:
+    """Whether there is a voice, and why not when there is none.
+
+    **The reason belongs to the user.** A switch that changes
+    nothing is worse than no switch: the user cannot tell whether the
+    voice is off, whether there is no voice on the machine, or
+    whether the package is missing from the build.
+
+    The three reasons are: the system has no SAPI, the package that
+    talks to it is missing, or the machine has no voice installed.
+    """
+    import sys
+
+    if sys.platform != "win32":
+        return {"available": False, "reason": "SAPI gibt es nur unter Windows",
+                "voices": []}
+
+    try:
+        import win32com.client  # noqa: F401
+    except ImportError as error:
+        return {"available": False,
+                "reason": f"pywin32 fehlt ({error}) - die Stimme kann nicht "
+                          f"angesprochen werden",
+                "voices": []}
+
+    try:
+        installed = voices()
+    except Exception as error:
+        return {"available": False,
+                "reason": f"Die Stimmen konnten nicht gelesen werden: {error}",
+                "voices": []}
+
+    if not installed:
+        return {"available": False,
+                "reason": "Auf diesem Rechner ist keine Stimme installiert",
+                "voices": []}
+
+    return {"available": True, "reason": "", "voices": installed}
+
+
 def voices() -> list[dict[str, Any]]:
     """The installed voices.
 
     Each voice has a name and a language. The list is empty when
     there is no voice.
     """
+    # **Through available().** That call only asks whether the speech
+    # engine is there - it does not ask for the voices, so there is
+    # no circle.
     if not available():
         return []
 
@@ -96,8 +143,13 @@ class Speaker:
     slow part, and the voice is used again and again.
     """
 
-    def __init__(self, language: str = "German") -> None:
+    def __init__(self, language: str = "German",
+                 name: str = "") -> None:
         self.language = language
+        #: **The voice the user chose.** Windows has a voice per
+        #: language, and the German one is not always installed - so
+        #: the choice is the user's.
+        self.name = name
         self._voice: Any = None
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -107,6 +159,14 @@ class Speaker:
             import win32com.client
 
             voice = win32com.client.Dispatch("SAPI.SpVoice")
+            if self.name:
+                # The voice the user picked, by its name.
+                for index in range(voice.GetVoices().Count):
+                    item = voice.GetVoices().Item(index)
+                    if str(item.GetDescription()) == self.name:
+                        voice.Voice = item
+                        self._voice = voice
+                        return self._voice
             self._voice = _pick_voice(voice, self.language)
         return self._voice
 
@@ -125,8 +185,13 @@ class Speaker:
                 with self._lock:
                     voice = self._ensure_voice()
                     voice.Speak(text)
-            except Exception:
-                pass
+            except Exception as error:
+                # **The error must not disappear.** A voice that
+                # fails silently is a switch that does nothing.
+                import logging
+
+                logging.getLogger("cpt_mem0.voice").warning(
+                    "the voice failed: %s", error)
 
         self._thread = threading.Thread(target=run, daemon=True)
         self._thread.start()

@@ -21,6 +21,7 @@ fails. The daemon is the only client; the API serves everybody.
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -233,6 +234,8 @@ class Engine:
         self.dimensions = dimensions
         self.user_id = user_id
         self._memory: Any = None
+        #: How fast the last answer came, in tokens per second.
+        self.last_tokens_per_second: float = 0.0
 
     def open(self) -> None:
         """Open the store and build the mem0 instance.
@@ -404,6 +407,10 @@ class Engine:
             headers={"Content-Type": "application/json",
                      "Authorization": f"Bearer {endpoint.api_key}"},
             method="POST")
+        # **How fast.** The time is measured here and not taken from
+        # the server, because the server does not always report it -
+        # and the number on the cockpit has to be there every time.
+        started = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=300) as response:
                 body = json.loads(response.read().decode("utf-8"))
@@ -416,6 +423,7 @@ class Engine:
             raise EngineError(
                 f"the model did not answer: {exc}") from exc
 
+        self.last_tokens_per_second = _tokens_per_second(body, started)
         choices = body.get("choices") or []
         if not choices:
             return ""
@@ -607,6 +615,40 @@ class Engine:
 
         return [(text, vector, times.get(text, 0.0))
                 for text, vector in vectors]
+
+
+def _tokens_per_second(body: dict[str, Any], started: float) -> float:
+    """How many tokens per second the answer came with.
+
+    **Measured, not guessed.** The time around the request and the
+    number of tokens in the answer give the speed. The server may
+    report its own timings; they are used when they are there, and
+    the measured time is the fallback.
+    """
+    import time as _time
+
+    elapsed = max(_time.monotonic() - started, 0.001)
+
+    usage = body.get("usage") or {}
+    tokens = usage.get("completion_tokens")
+    if not tokens:
+        timings = body.get("timings") or {}
+        tokens = timings.get("predicted_n") or timings.get("predicted_tokens")
+    if not tokens:
+        return 0.0
+
+    # The server reports the time of the generation itself; the
+    # measured time includes the transport.
+    timings = body.get("timings") or {}
+    seconds = timings.get("predicted_ms")
+    if seconds:
+        seconds = float(seconds) / 1000.0
+    else:
+        seconds = elapsed
+
+    if seconds <= 0:
+        return 0.0
+    return float(tokens) / seconds
 
 
 def _timestamp(item: dict[str, Any]) -> float:
