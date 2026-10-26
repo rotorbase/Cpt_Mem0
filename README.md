@@ -41,7 +41,9 @@ that `start` would use.
   where the naive KV formula is off by a factor of four.
 - **Ships its own `llama.cpp`.** Pinned to an exact build, with the CUDA
   runtime bundled. Nothing to install system-wide.
-- **Keeps the embedder on the CPU when the GPU is tight.** The store stays
+- **Keeps the embedder on the CPU.** It is small and it only works
+  when a memory is written or searched - the card is better used for
+  the model that answers and for the hearing. The store stays
   compatible either way — verified, not assumed.
 - **Runs the store embedded.** Qdrant in-process: no server, no Docker, no
   database daemon.
@@ -51,18 +53,33 @@ that `start` would use.
   and every memory findable and deletable. The window is Electron,
   the work is done by the Python backend - the same technology
   Discord uses.
-- **Can speak.** The voice output uses the speech engine Windows
-  already has - no model, no download, no VRAM.
+- **Can speak.** One voice, and it is a good one: a neural voice
+  (Piper, German) that runs on the processor. The model is part of
+  the package - the user installs the app and it has a voice.
+- **Can listen.** The microphone of the headset becomes text, on the
+  machine: whisper.cpp with a German speech model, and the card does
+  the hearing - a sentence takes two tenths of a second there. The
+  words go to the model like a typed question.
+- **Can look things up.** The model can ask the app for something
+  from the web - DuckDuckGo for the quick answers, Wikipedia for the
+  articles. It is off until the user switches it on, and the window
+  shows what was asked, so nothing leaves the machine unnoticed.
 - **Finds everything.** mem0's `get_all` returns 20 memories by default —
   the rest are unfindable. The limit is passed explicitly.
 
 ## Install
 
-**Windows:** download `Cpt Mem0 Setup 0.1.0.exe` from the
+**Windows:** download `Cpt Mem0 Setup 0.5.0.exe` from the
 [releases](https://github.com/rotorbase/Cpt_Mem0/releases) and run it.
 The installer puts a start menu entry and a desktop icon on the way.
-There is also `Cpt_Mem0-0.1.0-portable.exe` - one file, no
+There is also `Cpt_Mem0-0.5.0-portable.exe` - one file, no
 installation, runs from anywhere.
+
+The installer is 1.2 GB: the voice (109 MB), the hearing
+(whisper.cpp with the CUDA libraries and a German speech model,
+1.4 GB) and the program itself. The speech recognition is on the
+card because there it takes two tenths of a second instead of four
+and a half.
 
 The app is a program with a window of its own. No browser, no
 terminal, no console flashing up while a model loads. See
