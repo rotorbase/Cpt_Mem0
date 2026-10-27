@@ -50,6 +50,15 @@ docs/
 - Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`)
 - Markdownlint (MD013 line length disabled, MD047 newline-at-EOF enabled)
 - Every claim about GPU or runtime state must cite a measurement
+- **Attribution trailer is `Assisted-by:`, never `Co-authored-by:`.**
+  `Co-authored-by` is parsed by GitHub as a real contributor: it links the
+  commit to that email's account, renders an avatar, and adds a row to the
+  repository's contributor graph. `noreply@nousresearch.com` is not a
+  GitHub account, so `Co-authored-by: Hermes` still pollutes the commit
+  view with a phantom co-author. `Assisted-by:` is inert log text for
+  GitHub and is the format the Linux kernel prescribes for AI agents
+  (`Assisted-by: AGENT_NAME:MODEL_VERSION`). Use
+  `Assisted-by: Hermes:MiniMax-M3`.
 
 ## Rules for this repository
 
